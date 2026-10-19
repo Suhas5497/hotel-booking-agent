@@ -100,6 +100,17 @@ def _t(minutes: int) -> time:
     return time(minutes // 60, minutes % 60)
 
 
+_NON_VEG_RE = re.compile(r"\bnon[\s\-]*(veg|vegetarian)\b", re.I)
+_VEG_RE = re.compile(r"\b(veg|vegetarian|vegan|pure[\s\-]*veg|shakahari)\b", re.I)
+
+
+def wants_veg_only(preferences) -> bool:
+    """True only for an actual vegetarian request. 'non-veg' / 'non-vegetarian' contain the
+    word 'veg' but mean the opposite, so they are removed before matching."""
+    text = _NON_VEG_RE.sub(" ", str(preferences or ""))
+    return bool(_VEG_RE.search(text))
+
+
 _HIGHLIGHT_ORDER = ["rooftop", "private_dining", "live_music", "pure_veg", "outdoor_seating", "quiet_zone", "bar",
                     "kid_friendly", "pet_friendly", "wheelchair_accessible", "valet_parking", "wifi"]
 
@@ -204,17 +215,30 @@ class ReservationService:
 
     # ------------------------------------------------------------------ capacity
     def _occupancy(self, rid: str, d: date, t: time, exclude_code: str | None = None) -> dict[int, int]:
+        """Peak number of tables of each size in use at any moment of the new sitting [t, t+90).
+
+        Counting every overlapping booking over-states demand: a 6:30 and an 8:00 sitting don't
+        overlap each other, so one table serves both, yet both overlap a 7:30 request. What
+        matters is the most tables busy *at the same time*. (Sittings are intervals, so if the
+        peak fits, a table assignment always exists.)"""
         rows = self.db.query(
             "SELECT code, res_time, table_size FROM reservations "
             "WHERE restaurant_id = ? AND res_date = ? AND status = 'confirmed'", (rid, d.isoformat()))
-        used: dict[int, int] = {}
         start = _minutes(t)
+        end = start + DINING_MINUTES
+        starts: dict[int, list[int]] = {}
         for row in rows:
             if exclude_code and row["code"] == exclude_code:
                 continue
             other = _minutes(time.fromisoformat(row["res_time"]))
-            if abs(other - start) < DINING_MINUTES:   # overlapping 90-min sittings
-                used[row["table_size"]] = used.get(row["table_size"], 0) + 1
+            if other < end and start < other + DINING_MINUTES:   # overlaps the new sitting
+                starts.setdefault(row["table_size"], []).append(other)
+        used: dict[int, int] = {}
+        for size, sizes_starts in starts.items():
+            # Concurrency only rises when a sitting begins, so check the new start and every
+            # booking start that falls inside the new sitting.
+            points = [start] + [s for s in sizes_starts if start <= s < end]
+            used[size] = max(sum(1 for s in sizes_starts if s <= p < s + DINING_MINUTES) for p in points)
         return used
 
     def _allocate(self, r: dict, d: date, t: time, party: int, exclude_code: str | None = None) -> int | None:
@@ -390,7 +414,7 @@ class ReservationService:
         named = catalog.normalize_features([w for w in re.split(r"[,\s]+", str(preferences or "")) if w])
         wanted += [f for f in named if f not in wanted]
         keywords = [w for w in re.split(r"[^a-z]+", str(preferences or "").lower()) if len(w) > 3][:6]
-        veg = "veg" in str(preferences or "").lower().split() or "vegetarian" in str(preferences or "").lower()
+        veg = wants_veg_only(preferences)
         budget = int(budget_per_person) if budget_per_person else None
         terms = catalog.expand_cuisine(cuisine)
         try:
