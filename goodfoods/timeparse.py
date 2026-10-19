@@ -100,6 +100,9 @@ def time_candidates(text: str) -> list[time]:
         if word in raw:
             raw = re.sub(r"[a-z]+", " ", raw).strip() + reading
             break
+    # "8 baje" (Hindi "o'clock") and "8 o'clock" say nothing about AM/PM: drop the word and let
+    # the caller resolve the reading against opening hours.
+    raw = re.sub(r"\b(baje|bje|o'?clock|oclock)\b", " ", raw)
     s = raw.replace(" ", "").replace(".", "").replace("hrs", "").replace("hours", "")
     m = re.fullmatch(r"(\d{1,2}):?(\d{2})?(?::\d{2})?(am|pm)?", s)
     if not m:

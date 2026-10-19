@@ -1,4 +1,8 @@
-# GoodFoods · Gia
+# GoodFoods · Gia (hotel-booking-agent)
+
+> This repository continues [goodfoods-agent](https://github.com/Suhas5497/goodfoods-agent) with a set of
+> bug fixes from a code review: two safety gaps in booking confirmation and lookup, plus correctness and
+> robustness fixes. Every fix has a regression test. See [`CHANGES.md`](CHANGES.md) for the full list.
 
 Gia is a reservation assistant for GoodFoods, a (fictional) chain of 75 restaurants across Bengaluru. You tell her what you're looking for, in English, Hindi or a mix of both, and she suggests a place, checks which tables are actually free, and books, changes or cancels the reservation.
 
@@ -61,7 +65,7 @@ The brief asks for Llama 3.x 8B or a similar small model. Groq retired `llama-3.
 ### Tests and evaluation
 
 ```bash
-python -m unittest discover -s tests -t .    # 55 offline tests, no API key needed
+python -m unittest discover -s tests -t .    # 74 offline tests, no API key needed
 python tests/ui_walkthrough.py               # clicks through every screen with a scripted model
 python -m evals.run_evals                    # live run against the real model, writes evals/report.json
 ```
@@ -77,7 +81,7 @@ I didn't want guests typing their name and phone into a chat window, or guessing
 3. **Details.** Day, number of guests and time are buttons. Only the times that are actually free at that outlet are shown. Name, mobile and an optional request go in small fields.
 4. **Review.** A summary card with **Confirm booking** or **Edit details**. Nothing is saved before this point.
 5. **Booked.** A ticket with the confirmation code, an **Add to calendar** file and **Directions**.
-6. **Change or cancel.** Find your booking by mobile number (the code is optional), then change it or cancel it. Each change gets its own preview.
+6. **Change or cancel.** Find your bookings by mobile number. To change or cancel one, enter its confirmation code (codes are hidden when you search by phone alone). Each change gets its own preview.
 
 Every tap is sent to Gia as a normal message. The buttons never call the booking functions directly, so the model is still the one deciding what happens, which is what the brief asks for.
 
@@ -197,13 +201,13 @@ The full use-case document is in [`docs/USE_CASE.md`](docs/USE_CASE.md). Here's 
 - The 75 outlets, their tables and the existing bookings are generated data for Bengaluru. Map positions are approximate and placed around each neighbourhood.
 - A table is held for 90 minutes, bookings start on the hour or half hour, and the last seating is an hour before closing.
 - Up to 8 guests sit at one table, 9 to 20 need a private room, and more than 20 go to the events team.
-- A guest proves a booking is theirs with their phone number (and the code, if they have it).
+- A guest proves a booking is theirs with their phone number **and** the confirmation code. Searching by phone alone lists bookings with the codes masked. Five wrong codes for one number pause lookups for 15 minutes.
 - A time without AM/PM, like "9", is read against the outlet's opening hours. If both 9 AM and 9 PM are possible, Gia asks. "Kal" and "parso" are read as tomorrow and the day after, since bookings are always in the future.
 
 **Limitations**
 
 - Tables can't be joined, so a party of 8 needs an 8-seat table.
-- No OTP check, payments or deposits yet.
+- No OTP check yet, so a guest who has lost their code has to call the outlet. No payments or deposits.
 - SQLite, so it runs on a single machine.
 - On Groq's free tier, heavy use hits the per-minute and daily token limits. The app waits and retries, but replies slow down.
 - The model's wording varies between runs, and the live evaluation numbers depend on the model and provider you use.
@@ -223,7 +227,7 @@ The full use-case document is in [`docs/USE_CASE.md`](docs/USE_CASE.md). Here's 
 ```
 app.py                  Streamlit app: chat with step-by-step controls, outlet explorer, metrics
 goodfoods/
-  agent.py              agent loop and safety checks
+  agent.py              agent loop, safety checks and working memory
   llm.py                client for any OpenAI-compatible model API
   prompts.py            system prompt
   mcp_server.py         MCP tool server (JSON-RPC 2.0)

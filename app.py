@@ -631,7 +631,7 @@ def step_manage(ctx: dict) -> None:
         st.markdown('<div class="gf-label">Find your booking</div>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         ph = c1.text_input("Mobile you booked with", value=phone, key="m_phone", placeholder="10-digit number")
-        code = c2.text_input("Code (optional)", key="m_code", placeholder="GF-XXXXXX")
+        code = c2.text_input("Code (needed to change or cancel)", key="m_code", placeholder="GF-XXXXXX")
         b1, b2 = st.columns([2, 1])
         if b1.button("Find my bookings", type="primary", use_container_width=True, key="m_find"):
             try:

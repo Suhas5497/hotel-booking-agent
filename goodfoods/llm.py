@@ -21,7 +21,7 @@ class LLMError(Exception):
     pass
 
 
-MAX_RATE_LIMIT_WAIT_S = 25
+MAX_RATE_LIMIT_WAIT_S = 25   # total time one guest turn may spend waiting on rate limits
 
 
 def _retry_after(exc, detail: str) -> float:
@@ -143,6 +143,7 @@ class LLMClient:
             body["parallel_tool_calls"] = False   # one action at a time is easier to verify
         known = {t["function"]["name"] for t in tools or []}
         last_err = None
+        waited = 0.0   # rate-limit waiting is budgeted per call, not per attempt
         for attempt in range(self.s.max_retries + 1):
             started = time.perf_counter()
             try:
@@ -186,11 +187,15 @@ class LLMClient:
                     scope = "per day" if "per day" in detail or "(TPD)" in detail else "per minute"
                     last_err = LLMError(f"Rate limit reached (HTTP 429, tokens {scope}). The provider asked to "
                                         f"wait {wait:.0f}s. {detail[:160]}")
-                    if attempt < self.s.max_retries and wait <= MAX_RATE_LIMIT_WAIT_S:
+                    if attempt < self.s.max_retries and waited + wait <= MAX_RATE_LIMIT_WAIT_S:
                         if self.on_wait:
                             self.on_wait(wait)
                         time.sleep(wait + 0.5)
+                        waited += wait + 0.5
                         continue
+                    # The provider wants a longer wait than this turn can afford: fail fast with a
+                    # clear message instead of burning retries (and the guest's time) on backoff.
+                    raise last_err
                 elif exc.code in (500, 502, 503, 504):
                     last_err = LLMError(f"LLM provider error (HTTP {exc.code}): {detail[:200]}")
                 elif exc.code == 401:
