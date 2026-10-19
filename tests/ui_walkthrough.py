@@ -1,0 +1,231 @@
+"""UI walkthrough: drives app.py through every booking step (start -> options -> details -> review ->
+booked -> change -> cancel) with a stand-in `streamlit` module and a scripted model. No API key needed.
+
+Run:  python tests/ui_walkthrough.py
+"""
+import json
+import os
+import sys
+import types
+from datetime import datetime
+from unittest.mock import MagicMock
+
+os.environ["GOODFOODS_NOW"] = "2026-10-12T16:00"
+os.environ["GOODFOODS_DB"] = ":memory:"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+
+
+class State(dict):
+    def __getattr__(self, k):
+        try:
+            return self[k]
+        except KeyError as e:
+            raise AttributeError(k) from e
+
+    def __setattr__(self, k, v):
+        self[k] = v
+
+    def __delattr__(self, k):
+        del self[k]
+
+
+class Rerun(Exception):
+    pass
+
+
+class FakeSt(types.ModuleType):
+    def __init__(self):
+        super().__init__("streamlit")
+        self.session_state = State()
+        self.press = None          # key of the button to "click" this run
+        self.typed = None
+        self.log = []
+        self.column_config = MagicMock()
+
+    def __getattr__(self, name):
+        def anything(*a, **k):
+            self.log.append((name, a[:1], {kk: k[kk] for kk in ("key",) if kk in k}))
+            return MagicMock()
+        return anything
+
+    @property
+    def sidebar(self):
+        return self
+
+    def cache_resource(self, *a, **k):
+        return lambda f: f
+
+    def columns(self, spec, **k):
+        n = spec if isinstance(spec, int) else len(spec)
+        return [self for _ in range(n)]
+
+    def container(self, **k):
+        self.log.append(("container", (k.get("key"),), {}))
+        return self
+
+    def chat_message(self, *a, **k):
+        return self
+
+    def expander(self, *a, **k):
+        return self
+
+    def spinner(self, *a, **k):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def empty(self):
+        return MagicMock()
+
+    def markdown(self, body, *a, **k):
+        self.log.append(("markdown", (str(body)[:120],), {}))
+
+    def button(self, label, key=None, on_click=None, args=(), disabled=False, **k):
+        self.log.append(("button", (label,), {"key": key, "disabled": disabled}))
+        hit = self.press is not None and (key == self.press or label == self.press) and not disabled
+        if hit:
+            self.press = None
+            if on_click:
+                on_click(*args)
+                raise Rerun()
+            return True
+        return False
+
+    def download_button(self, label, data, **k):
+        self.log.append(("download_button", (label,), {"data": data[:60]}))
+
+    def link_button(self, label, url, **k):
+        self.log.append(("link_button", (label,), {"url": url}))
+
+    def pills(self, label, options, format_func=None, default=None, key=None, **k):
+        self.log.append(("pills", (label,), {"options": [format_func(o) if format_func else o for o in options][:12],
+                                             "default": default}))
+        return self.session_state.get(key, default)
+
+    def text_input(self, label, value="", key=None, **k):
+        return self.session_state.get(key, value)
+
+    def selectbox(self, label, options, key=None, **k):
+        return self.session_state.get(key, options[0])
+
+    def segmented_control(self, label, options, key=None, **k):
+        return self.session_state.get(key, options[0])
+
+    def chat_input(self, *a, **k):
+        t, self.typed = self.typed, None
+        return t
+
+    def toggle(self, *a, value=False, **k):
+        return value
+
+    def rerun(self):
+        raise Rerun()
+
+    def error(self, msg, *a, **k):
+        self.log.append(("ERROR", (msg,), {}))
+
+
+st = FakeSt()
+sys.modules["streamlit"] = st
+
+from test_agent import FakeLLM, call, say  # noqa: E402
+from goodfoods.agent import ReservationAgent  # noqa: E402
+from goodfoods.mcp_client import InProcessTransport, MCPClient  # noqa: E402
+from goodfoods.mcp_server import MCPServer  # noqa: E402
+from goodfoods.seed import build_database  # noqa: E402
+from goodfoods.services import ReservationService  # noqa: E402
+
+SRC = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
+service = ReservationService(build_database(":memory:", with_bookings=False))
+llm = FakeLLM([])
+agent = ReservationAgent(llm, MCPClient(InProcessTransport(MCPServer(service))).initialize(), n_outlets=75)
+st.session_state.update(agent=agent, messages=[], usage={"prompt_tokens": 0, "completion_tokens": 0,
+                                                         "turns": 0, "llm_ms": 0.0})
+
+
+def run(label, press=None, typed=None, script=None, state=None):
+    if script:
+        llm.script.extend(script)
+    if state:
+        st.session_state.update(state)
+    st.press, st.typed, st.log = press, typed, []
+    g = {"__name__": "__main__"}
+    exec_src = SRC.replace("return ReservationService(build_database())", "return SERVICE")
+    g["SERVICE"] = service
+    for _ in range(4):   # follow reruns (a click, then the model turn, then the redraw)
+        try:
+            exec(compile(exec_src, "app.py", "exec"), g)
+            break
+        except Rerun:
+            st.press, st.typed = None, None
+            continue
+    buttons = [l[1][0] for l in st.log if l[0] == "button"]
+    keys = [l[1][0] for l in st.log if l[0] == "container" and l[1][0]]
+    pills = [(l[1][0], l[2]["options"][:6], l[2]["default"]) for l in st.log if l[0] == "pills"]
+    errors = [l[1][0] for l in st.log if l[0] == "ERROR"]
+    extra = [(l[0], l[1][0]) for l in st.log if l[0] in ("download_button", "link_button")]
+    print(f"\n== {label}")
+    print("   containers:", [k for k in keys if k not in ("chat_card", "ctx_col", "ctx_map", "ctx_intro", "ctx_outlet", "ctx_steps")])
+    print("   buttons:", buttons[:14])
+    if pills:
+        for p in pills:
+            print("   pills:", p)
+    if extra:
+        print("   other:", extra)
+    if errors:
+        print("   ERRORS:", errors)
+    print("   last msgs:", [(m["role"], m["content"][:70]) for m in st.session_state.messages[-2:]])
+    print("   pending:", agent.pending.tool if agent.pending else None)
+
+
+# 1 start
+run("start")
+# 2 occasion -> model recommends
+run("occasion -> options", press="**Date night** · romantic, rooftop or quiet",
+    script=[call("recommend_restaurants", {"occasion": "date", "party_size": 2, "date": "2026-10-17", "time": "20:00"}),
+            say("Three lovely options free at 8 PM Saturday.")])
+# 3 choose first card
+first_key = next(k for k in ("pick_1_0",))
+run("choose card -> details form", press=first_key)
+# 4 fill name/phone and review (needs a time picked: set via pills state)
+rid = st.session_state.picked
+st.session_state[f"bk_{rid}_day"] = "2026-10-17"
+st.session_state[f"bk_{rid}_party"] = "2"
+st.session_state[f"bk_{rid}_time_2026-10-17_2"] = "20:00"
+st.session_state["f_name"] = "Asha Rao"
+st.session_state["f_phone"] = "98765 43210"
+args = {"restaurant_id": rid, "date": "2026-10-17", "time": "20:00", "party_size": 2,
+        "customer_name": "Asha Rao", "phone": "9876543210"}
+run("review booking -> preview", press="f_review",
+    script=[call("make_reservation", args), say("Here's your booking — shall I confirm?")])
+# 5 confirm
+run("confirm -> ticket", press="rv_yes", script=[call("make_reservation", args), say("You're booked!")])
+code = next(iter(agent.known_codes), None)
+print("   booked code:", code, "rows:", service.db.query("SELECT COUNT(*) n FROM reservations")[0]["n"])
+# 6 change from ticket -> lookup -> list
+run("change this booking -> lookup", press="Change this booking",
+    script=[call("lookup_reservation", {"phone": "9876543210"}), say("I found your booking.")])
+run("pick change -> modify form", press="mod_0")
+st.session_state[f"mod_{code}_time_2026-10-17_2"] = "21:00"
+run("review change -> preview", press="mod_review",
+    script=[call("modify_reservation", {"confirmation_code": code, "phone": "9876543210", "new_date": "2026-10-17",
+                                        "new_time": "21:00", "new_party_size": 2}), say("Move it to 9 PM?")])
+run("confirm change -> ticket", press="rv_yes",
+    script=[call("modify_reservation", {"confirmation_code": code, "phone": "9876543210", "new_date": "2026-10-17",
+                                        "new_time": "21:00", "new_party_size": 2}), say("Updated!")])
+print("   db time now:", service.db.query("SELECT res_time FROM reservations")[0]["res_time"])
+# 7 cancel from ticket -> preview -> keep, then cancel -> confirm
+run("cancel it -> preview", press="Cancel it",
+    script=[call("cancel_reservation", {"confirmation_code": code, "phone": "9876543210"}), say("Cancel it?")])
+run("keep my booking", press="rv_back")
+run("manage form shown again", press=None)
+# 8 edit details path: new chat, explore jump
+run("new chat", press="New chat")
+run("bad phone validation", state={"picked": "BLR-001", "f_phone": "123", f"bk_BLR-001_time_2026-10-12_2": "19:00"},
+    press="f_review")

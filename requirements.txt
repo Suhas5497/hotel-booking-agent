@@ -1,0 +1,3 @@
+# Core agent, MCP server and tests use only the Python standard library.
+streamlit>=1.43
+pandas>=2.0
