@@ -28,7 +28,7 @@ from goodfoods.llm import LLMClient
 from goodfoods.mcp_client import InProcessTransport, MCPClient
 from goodfoods.mcp_server import MCPServer
 from goodfoods.seed import build_database
-from goodfoods.services import ReservationService, ToolError, normalize_phone, validate_name
+from goodfoods.services import CODE_RE, ReservationService, ToolError, normalize_phone, validate_name
 from goodfoods.timeparse import ParseError, human_time, parse_date, parse_time, snap_to_slot
 from goodfoods.ui_art import cover_svg
 
@@ -604,6 +604,21 @@ def step_manage(ctx: dict) -> None:
                 st.markdown(f'<b>{esc(concept)} · {esc(area)}</b> <span class="gf-meta">· {esc(b["confirmation_code"])}'
                             f'</span><div class="gf-meta">{esc(b.get("day", ""))} · {t12(b.get("time"))} · '
                             f'{b.get("party_size")} guests</div>', unsafe_allow_html=True)
+                if "*" in b["confirmation_code"]:
+                    # Found by phone only: the code is masked, so ask for it before allowing changes.
+                    u1, u2 = st.columns([2, 1])
+                    typed = u1.text_input("Confirmation code", key=f"unlock_code_{i}", placeholder="GF-XXXXXX",
+                                          label_visibility="collapsed")
+                    if u2.button("Unlock", key=f"unlock_{i}", use_container_width=True):
+                        typed = typed.strip().upper()
+                        if not CODE_RE.fullmatch(typed):
+                            st.error("Enter the full code from your confirmation, like GF-AB12CD.")
+                        else:
+                            queue(f"Find my booking {typed}. Phone: {phone}.", f"Find booking {typed}")
+                            st.rerun()
+                    st.markdown('<div class="gf-note">Enter the code from your confirmation to change or cancel '
+                                'this booking.</div>', unsafe_allow_html=True)
+                    continue
                 c1, c2 = st.columns(2)
                 c1.button("Change day, time or guests", key=f"mod_{i}", use_container_width=True,
                           on_click=lambda bk=b, ph=phone: st.session_state.update(modifying={**bk, "phone": ph}))

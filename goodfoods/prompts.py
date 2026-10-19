@@ -44,13 +44,23 @@ Tool returns picks -> You: "Happy anniversary! Three lovely options free at 8 PM
 """
 
 
-def render_system_prompt(now: datetime, n_outlets: int, city: str, guest_area: str | None = None) -> str:
+KNOWN_ORDER = ("restaurant_id", "date", "time", "party_size", "customer_name", "phone", "confirmation_code")
+
+
+def render_system_prompt(now: datetime, n_outlets: int, city: str, guest_area: str | None = None,
+                         known: dict | None = None) -> str:
     prompt = SYSTEM_PROMPT.format(
         n_outlets=n_outlets, city=city, today_long=now.strftime("%A, %d %B %Y"),
         today_iso=now.date().isoformat(), now_time=now.strftime("%H:%M"), areas=", ".join(catalog.AREAS))
     if guest_area:
         prompt += (f"\nGUEST LOCATION: the guest is near {guest_area}. When suggesting or searching, pass "
                    f"area=\"{guest_area}\" unless they ask for somewhere else.\n")
+    if known:
+        # Older messages get trimmed to save tokens; these details must not be lost with them.
+        facts = "; ".join(f"{k}={known[k]}" for k in KNOWN_ORDER if known.get(k) not in (None, ""))
+        if facts:
+            prompt += (f"\nDETAILS ALREADY GIVEN IN THIS CHAT (reuse them in tool calls instead of asking again, "
+                       f"unless the guest changes them; never repeat the full phone number to the guest): {facts}\n")
     return prompt
 
 

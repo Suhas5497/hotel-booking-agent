@@ -103,7 +103,8 @@ def build_tools(svc: ReservationService) -> list[Tool]:
               "required": ["restaurant_id", "date", "time", "party_size", "customer_name", "phone"]},
              svc.make_reservation, read_only=False),
         Tool("lookup_reservation",
-             "Find a guest's bookings by phone, optionally one code.",
+             "Find a guest's bookings by phone. Without the confirmation code the codes are hidden; "
+             "changing or cancelling needs the full code.",
              {"type": "object", "properties": {"phone": _PHONE, "confirmation_code": _CODE}, "required": ["phone"]},
              svc.lookup_reservation),
         Tool("modify_reservation",
@@ -182,7 +183,8 @@ class MCPServer:
             return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": exc.code, "message": exc.message}}
         except Exception as exc:  # never crash the transport
             log.exception("internal error")
-            return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32603, "message": f"Internal error: {exc}"}}
+            # Details go to the server log, not to the client.
+            return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32603, "message": "Internal error"}}
 
     def _call_tool(self, name: str, arguments: dict) -> dict:
         tool = self.tools.get(name)

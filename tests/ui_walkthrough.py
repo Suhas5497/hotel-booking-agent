@@ -209,8 +209,15 @@ run("confirm -> ticket", press="rv_yes", script=[call("make_reservation", args),
 code = next(iter(agent.known_codes), None)
 print("   booked code:", code, "rows:", service.db.query("SELECT COUNT(*) n FROM reservations")[0]["n"])
 # 6 change from ticket -> lookup -> list
-run("change this booking -> lookup", press="Change this booking",
-    script=[call("lookup_reservation", {"phone": "9876543210"}), say("I found your booking.")])
+# phone-only lookup: codes are masked, so the card must offer "Unlock" rather than change/cancel
+run("change this booking -> phone-only lookup (masked)", press="Change this booking",
+    script=[call("lookup_reservation", {"phone": "9876543210"}), say("I found your booking. What's your code?")])
+assert not any(k.get("key") == "mod_0" for _, _, k in st.log), "change button shown for a masked code"
+assert any(k.get("key") == "unlock_0" for _, _, k in st.log), "unlock control missing for a masked code"
+print("   masked lookup: change/cancel hidden, unlock shown")
+run("unlock with code -> full lookup", press="unlock_0", state={"unlock_code_0": code},
+    script=[call("lookup_reservation", {"phone": "9876543210", "confirmation_code": code}),
+            say("I found your booking.")])
 run("pick change -> modify form", press="mod_0")
 st.session_state[f"mod_{code}_time_2026-10-17_2"] = "21:00"
 run("review change -> preview", press="mod_review",

@@ -29,6 +29,8 @@ TABLE_SIZES = (2, 4, 6, 8)
 PRIVATE_ROOM = -1
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # no 0/O/1/I/L confusion over the phone
 CODE_RE = re.compile(r"\bGF-[A-Z0-9]{6}\b")
+MAX_FAILED_VERIFICATIONS = 5     # wrong code+phone attempts per phone ...
+LOCKOUT_MINUTES = 15             # ... within this window before lookups are paused
 
 
 class ToolError(Exception):
@@ -60,6 +62,12 @@ def normalize_phone(phone) -> str:
 
 def mask_phone(phone: str) -> str:
     return f"+91 ******{phone[-4:]}"
+
+
+def mask_code(code: str) -> str:
+    """'GF-ABC123' -> 'GF-****23'. Deliberately does not match CODE_RE, so it can never be
+    passed back as a working code (or slip past the hallucination guard)."""
+    return f"GF-****{code[-2:]}"
 
 
 def validate_name(name) -> str:
@@ -112,6 +120,7 @@ class ReservationService:
     def __init__(self, db: Database, clock: Callable[[], datetime] = default_now):
         self.db = db
         self.clock = clock
+        self._failed: dict[str, list[datetime]] = {}   # phone -> recent failed code checks
 
     # ------------------------------------------------------------------ lookups
     def _all_restaurants(self) -> list[dict]:
@@ -532,26 +541,37 @@ class ReservationService:
                      (self.clock().isoformat(timespec="seconds"), action, code, json.dumps(detail, default=str)))
 
     def _verified(self, code, phone) -> dict:
+        """Code + phone together prove a booking is the guest's. Both are required: the phone
+        alone is not a secret (anyone can know your number), the code is."""
         code_n = str(code or "").strip().upper().replace(" ", "")
         if code_n and not code_n.startswith("GF-") and len(code_n) == 8 and code_n.startswith("GF"):
             code_n = "GF-" + code_n[2:]
         if not CODE_RE.fullmatch(code_n):
             raise ToolError("INVALID_CODE", "Confirmation codes look like GF-XXXXXX.",
-                            hint="Ask the guest for the code from their confirmation, or look up by phone.")
+                            hint="Ask the guest for the full code from their confirmation message.")
         ph = normalize_phone(phone)
+        current = self.clock()
+        window = timedelta(minutes=LOCKOUT_MINUTES)
+        recent = [t for t in self._failed.get(ph, []) if current - t < window]
+        self._failed[ph] = recent
+        if len(recent) >= MAX_FAILED_VERIFICATIONS:
+            raise ToolError("TOO_MANY_ATTEMPTS", "Too many incorrect codes for this number. Please try again later.",
+                            hint=f"Tell the guest to wait {LOCKOUT_MINUTES} minutes or call the outlet directly.")
         rows = self.db.query(
             "SELECT res.*, r.name AS restaurant, r.address FROM reservations res "
             "JOIN restaurants r ON r.id = res.restaurant_id WHERE res.code = ?", (code_n,))
         # Same message for "no such code" and "wrong phone": don't leak which bookings exist.
         if not rows or rows[0]["phone"] != ph:
+            recent.append(current)
             raise ToolError("BOOKING_NOT_FOUND", "No booking matches that code and phone number.",
                             hint="Double-check the code and the phone number used when booking.")
+        self._failed.pop(ph, None)
         return rows[0]
 
     @staticmethod
-    def _public(res: dict) -> dict:
+    def _public(res: dict, reveal_code: bool = True) -> dict:
         d = date.fromisoformat(res["res_date"])
-        return {"confirmation_code": res["code"], "status": res["status"], "restaurant_id": res["restaurant_id"],
+        return {"confirmation_code": res["code"] if reveal_code else mask_code(res["code"]), "status": res["status"], "restaurant_id": res["restaurant_id"],
                 "restaurant": res["restaurant"], "date": res["res_date"], "day": human_date(d),
                 "time": res["res_time"], "party_size": res["party_size"], "name": res["customer_name"],
                 "phone": mask_phone(res["phone"]), "special_requests": res["special_requests"]}
@@ -566,7 +586,12 @@ class ReservationService:
             "AND res.res_date >= ? ORDER BY res.res_date, res.res_time LIMIT 5", (ph, self.clock().date().isoformat()))
         if not rows:
             return {"reservations": [], "hint": "No upcoming bookings for this number."}
-        return {"reservations": [self._public(r) for r in rows]}
+        # Knowing a phone number is not proof of owning the booking, so codes stay masked here.
+        # Changing or cancelling needs the full code from the guest's confirmation.
+        return {"reservations": [self._public(r, reveal_code=False) for r in rows],
+                "codes_hidden": True,
+                "hint": "Codes are hidden. To change or cancel, ask the guest for the full code from their "
+                        "confirmation, then call lookup_reservation again with phone and confirmation_code."}
 
     def modify_reservation(self, confirmation_code, phone, new_date=None, new_time=None,
                            new_party_size=None, special_requests=None, dry_run=False) -> dict:
