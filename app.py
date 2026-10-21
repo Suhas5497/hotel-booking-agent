@@ -24,7 +24,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from goodfoods import catalog, flow, mascot, voice
+from goodfoods import catalog, flow, layout, mascot, voice
 from goodfoods.agent import ReservationAgent
 from goodfoods.config import ROOT, load_llm_settings, now
 from goodfoods.llm import LLMClient
@@ -137,7 +137,21 @@ header[data-testid="stHeader"] { background:transparent; }
 .gf-ticket-grid b { font-size:15px; color:var(--gf-ink); }
 [data-testid="stPills"] button { border-radius:10px; }
 /* keep the context panel in view while the chat scrolls */
-.st-key-ctx_col { position:sticky; top:1rem; }
+/* booking status tracker */
+.gf-trk-row { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; margin:10px 0 8px; }
+.gf-trk { display:grid; justify-items:center; gap:4px; text-align:center; position:relative; }
+.gf-trk:not(:last-child)::after { content:""; position:absolute; top:13px; left:calc(50% + 16px); right:calc(-50% + 16px);
+  height:2px; background:var(--gf-line); }
+.gf-trk.done:not(:last-child)::after { background:var(--gf-accent); }
+.gf-trk .d { width:26px; height:26px; border-radius:50%; display:grid; place-items:center; font-size:12px; font-weight:700;
+  background:#F1F3EF; color:var(--gf-muted); border:2px solid var(--gf-line); }
+.gf-trk.done .d { background:var(--gf-accent); border-color:var(--gf-accent); color:#FFFFFF; }
+.gf-trk.current .d { background:#FFFFFF; border-color:var(--gf-accent); color:var(--gf-accent); box-shadow:0 0 0 4px var(--gf-tint); }
+.gf-trk .l { font-size:11.5px; line-height:1.25; color:var(--gf-muted); }
+.gf-trk.current .l, .gf-trk.done .l { color:var(--gf-ink); font-weight:600; }
+.gf-trk-outlet { font-weight:700; font-size:15px; margin-top:2px; }
+.gf-trk-note { font-size:13px; color:var(--gf-muted); }
+.gf-panel-hint { justify-content:center; padding:6px 0; }
 [data-testid="stColumn"]:has(.st-key-ctx_col) { align-self:stretch; }
 [data-testid="stMetric"] { background:#FFFFFF; border-radius:16px; padding:18px 20px; box-shadow:0 1px 2px rgba(23,32,28,.04), 0 6px 18px rgba(23,32,28,.05); }
 """ + mascot.STAGE_CSS + """
@@ -218,25 +232,27 @@ def start_voice() -> None:
 
 def speech_output() -> None:
     """Render a zero-height component that speaks (or stops speaking) in the guest's browser.
-    Gia's voice comes from Sarvam Bulbul when SARVAM_API_KEY is set; otherwise, or if Sarvam
-    fails, the browser's own voice reads the line."""
+
+    Gia reads her whole reply, word for word, one sentence after another, and her bubble shows
+    each sentence as she says it. The voice is Sarvam Bulbul when SARVAM_API_KEY is set (all
+    sentences voiced in parallel); otherwise, or if Sarvam fails, the browser's own voice."""
     text = st.session_state.pop("to_speak", None)
     stop = st.session_state.pop("stop_speaking", False)
     if not (text or stop):
         return
-    line = voice.speakable(text) if text else None
+    lines = voice.split_for_speech(voice.speakable(text)) if text else []
     lang = voice.speech_lang(text or "")
     audio = None
-    if line:
+    if lines:
         tts = voice.load_tts_settings()
         if tts.api_key:
             try:
-                audio = voice.synthesize(line, lang, tts)
+                audio = voice.synthesize_lines(lines, lang, tts)
             except voice.VoiceError as exc:
                 if not st.session_state.get("tts_warned"):   # say it once, then quietly use the browser voice
                     st.session_state.tts_warned = True
                     st.toast(str(exc))
-    components.html(voice.speak_script(line, lang, audio=audio), height=0)
+    components.html(voice.speak_script(lines, lang, audio=audio), height=0)
 
 
 GIA_SLOT: dict = {"slot": None}   # the stage placeholder for this run, so waits can update it
@@ -518,9 +534,9 @@ def step_start() -> None:
     if not voice_on():
         st.button("Talk to Gia instead of typing", key="start_voice", icon=":material/mic:", type="primary",
                   on_click=start_voice, use_container_width=True)
-    cols = st.columns(3)
+    cols = st.columns(2)
     for i, (title, sub, ask) in enumerate(OCCASIONS):
-        cols[i % 3].button(f"**{title}** · {sub}", key=f"occ{i}", on_click=queue, args=(ask, title),
+        cols[i % 2].button(f"**{title}** · {sub}", key=f"occ{i}", on_click=queue, args=(ask, title),
                            use_container_width=True)
     st.button("Change or cancel a booking", key="start_manage", on_click=open_manage)
 
@@ -796,17 +812,51 @@ def step_modify(service: ReservationService, ctx: dict) -> None:
                   key="mod_back")
 
 
-def action_area(agent: ReservationAgent, service: ReservationService, ctx: dict) -> None:
-    """The controls under the conversation change with the step the guest is on."""
-    step = current_step(agent, ctx)
-    if step == "start":
-        step_start()
-    elif step == "options":
+def chat_actions(agent: ReservationAgent, ctx: dict, step: str) -> None:
+    """The quick actions fixed under the chat box. Booking steps live in the side panel."""
+    if step == "options":
         chip_row([("Help me choose", "Which of these would you pick for me, and why?"),
                   ("Cheaper", "Show me cheaper options"), ("Top rated", "Show the top-rated options"),
                   ("Another area", "Show options in a nearby area"), ("Different cuisine", "Show a different cuisine")],
                  "ref")
-    elif step == "details":
+    elif step == "chat":
+        chip_row([("Suggest a place", "Suggest a good place for me"), ("Change or cancel", open_manage),
+                  ("Start over", new_chat)], "chat")
+    elif step in ("details", "review", "done", "manage", "modify"):
+        st.markdown('<div class="gf-note gf-panel-hint">Continue in the <b>booking panel</b> · '
+                    'you can also just tell Gia what to change</div>', unsafe_allow_html=True)
+
+
+def booking_status(agent: ReservationAgent, service: ReservationService, ctx: dict, step: str) -> None:
+    """The tracker at the top of the booking panel."""
+    outlet = None
+    rid = st.session_state.get("picked") or (st.session_state.get("modifying") or {}).get("restaurant_id")
+    if agent.pending:
+        rid = agent.pending.summary.get("restaurant_id") or (agent.pending.summary.get("reservation") or {}).get(
+            "restaurant_id") or (agent.pending.summary.get("after") or {}).get("restaurant_id") or rid
+    done = ctx.get("done") or {}
+    data = done.get("summary") or done.get("reservation") or {}
+    rid = data.get("restaurant_id") or rid
+    if rid:
+        try:
+            outlet = " · ".join(split_name(service.resolve_restaurant(rid)["name"]))
+        except ToolError:
+            outlet = None
+    if step == "manage" and ctx.get("lookup"):
+        outlet = outlet or "found"
+    prog = flow.booking_progress(step, outlet, agent.pending.tool if agent.pending else None, done.get("status"),
+                                 done.get("confirmation_code") or data.get("confirmation_code"))
+    dots = "".join(f'<div class="gf-trk {state}"><span class="d">{"✓" if state == "done" else i + 1}</span>'
+                   f'<span class="l">{esc(label)}</span></div>' for i, (label, state) in enumerate(prog["steps"]))
+    sub = f'<div class="gf-trk-outlet">{esc(prog["outlet"])}</div>' if prog["outlet"] and prog["outlet"] != "found" else ""
+    with st.container(key="ctx_status"):
+        st.markdown(f'<div class="gf-label">{esc(prog["title"])}</div>{sub}<div class="gf-trk-row">{dots}</div>'
+                    f'<div class="gf-trk-note">{esc(prog["note"])}</div>', unsafe_allow_html=True)
+
+
+def booking_panel(agent: ReservationAgent, service: ReservationService, ctx: dict, step: str) -> None:
+    """Form, review card, ticket and change/cancel, in the side panel next to the chat."""
+    if step == "details":
         step_details(service, ctx)
     elif step == "review":
         step_review(service, agent)
@@ -816,9 +866,6 @@ def action_area(agent: ReservationAgent, service: ReservationService, ctx: dict)
         step_manage(ctx)
     elif step == "modify":
         step_modify(service, ctx)
-    else:
-        chip_row([("Suggest a place", "Suggest a good place for me"), ("Change or cancel", open_manage),
-                  ("Start over", new_chat)], "chat")
 
 
 # ----------------------------------------------------------------------------- right-hand panel
@@ -897,50 +944,55 @@ def intro_panel(service: ReservationService) -> None:
 
 # ----------------------------------------------------------------------------- pages
 def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: bool) -> None:
+    """One screen: the chat column (Gia on top, a chat box that scrolls inside itself, actions,
+    mic and input fixed at the bottom) next to the booking panel. The page itself doesn't scroll."""
     ctx = session_context(agent)
-    left, right = st.columns([1.55, 1], gap="large")
+    step = current_step(agent, ctx)
+    left, right = st.columns([1.5, 1], gap="large")
 
     with left:
         with st.container(key="chat_card"):
             hour = now().hour
             greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
-            h, b = st.columns([5, 1.2], vertical_alignment="center")
+            h, n, b = st.columns([2.5, 1.5, 1.1], vertical_alignment="center")
             h.markdown(f'<div class="gf-h1">{greet}. Where shall we eat?</div>'
                        f'<div class="gf-sub">{service.db.restaurant_count()} outlets across Bengaluru · '
                        'English, Hindi or Hinglish</div>', unsafe_allow_html=True)
-            if st.session_state.messages:
-                b.button("New chat", on_click=new_chat, use_container_width=True)
-            b.toggle("Voice", key="voice_on", on_change=on_voice_toggle,
-                     help="Gia greets you, listens through the mic and reads her replies aloud.")
+            area = n.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area",
+                               help="Gia will suggest outlets in and around this area.")
+            agent.guest_area = None if area == ANYWHERE else area
+            with b:
+                st.toggle("Voice", key="voice_on", on_change=on_voice_toggle,
+                          help="Gia greets you, listens through the mic and reads her replies aloud.")
+                if st.session_state.messages:
+                    st.button("New chat", on_click=new_chat, use_container_width=True)
             GIA_SLOT["slot"] = st.empty()
             show_gia(gia_moment(agent, ctx))
-            near, _ = st.columns([1.3, 2])
-            area = near.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area",
-                                  help="Gia will suggest outlets in and around this area.")
-            agent.guest_area = None if area == ANYWHERE else area
-            st.divider()
 
-            if not st.session_state.messages:
+            chat_box = st.container(height=420, border=False, key="chat_scroll")
+            with chat_box:
                 with st.chat_message("assistant", avatar=AVATARS["assistant"]):
                     st.markdown(greeting_text())
-            msgs = st.session_state.messages
-            for idx, m in enumerate(msgs):
-                with st.chat_message(m["role"], avatar=AVATARS[m["role"]]):
-                    st.markdown(m["content"])
-                    if m["role"] == "assistant" and m.get("trace"):
-                        for e in m["trace"]:
-                            if e.kind == "llm" and e.name == "error":
-                                st.caption(f"Technical detail: {e.detail.get('message')} — run "
-                                           "`python -m goodfoods.diagnose` to test the connection.")
-                        rec_cards(m["trace"], interactive=idx == ctx["live_rec_idx"], msg_idx=idx)
-                        if show_trace:
-                            raw_trace(m["trace"])
-            pending_area = st.container()
+                    if step == "start":
+                        step_start()
+                msgs = st.session_state.messages
+                for idx, m in enumerate(msgs):
+                    with st.chat_message(m["role"], avatar=AVATARS[m["role"]]):
+                        st.markdown(m["content"])
+                        if m["role"] == "assistant" and m.get("trace"):
+                            for e in m["trace"]:
+                                if e.kind == "llm" and e.name == "error":
+                                    st.caption(f"Technical detail: {e.detail.get('message')} — run "
+                                               "`python -m goodfoods.diagnose` to test the connection.")
+                            rec_cards(m["trace"], interactive=idx == ctx["live_rec_idx"], msg_idx=idx)
+                            if show_trace:
+                                raw_trace(m["trace"])
+                pending_area = st.container()
+                st.markdown(layout.CHAT_END, unsafe_allow_html=True)
 
-            action_area(agent, service, ctx)
+            chat_actions(agent, ctx, step)
             heard = mic_input() if voice_on() else None
             typed = st.chat_input("Or just type to Gia…")
-            speech_output()
             if typed:
                 q = {"text": typed, "shown": typed}
             elif heard:
@@ -957,6 +1009,8 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
                 agent.llm.on_wait = lambda secs: waiting.info(
                     f"Lots of requests right now — waiting {secs:.0f}s for the model, then continuing…")
                 show_gia("searching", "Let me check…")
+                components.html(layout.fit_script(len(st.session_state.messages) + 1, force_scroll=True,
+                                                  nonce="pending"), height=0)
                 with st.spinner("Checking tables…"):
                     turn = agent.chat(q["text"])
                 waiting.empty()
@@ -980,19 +1034,27 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
         st.rerun()   # redraw the step controls and the context panel from the new state
 
     with right, st.container(key="ctx_col"):
-        if not ctx["focus"]:
-            intro_panel(service)
-        else:
-            outlet_panel(service, ctx)
+        side = st.container(height=720, border=False, key="side_scroll")
+        with side:
+            booking_status(agent, service, ctx, step)
+            booking_panel(agent, service, ctx, step)
+            if step not in ("details", "review", "done", "modify"):   # those cards already show the outlet
+                if not ctx["focus"]:
+                    intro_panel(service)
+                else:
+                    outlet_panel(service, ctx)
             steps_panel(ctx)
-        with st.container(key="ctx_map"):
-            st.markdown('<div class="gf-label">On the map</div>', unsafe_allow_html=True)
-            outlet_map(service, ctx["focus"], [r["restaurant_id"] for r in (ctx["recs"] or [])][:3])
-            st.markdown('<div class="gf-legend"><span><i style="background:#1E5A47"></i>In focus</span>'
-                        '<span><i style="background:#B4651E"></i>Suggested</span>'
-                        '<span><i style="background:#2B4C7E"></i>You</span>'
-                        '<span><i style="background:#9AA59F"></i>Other outlets</span></div>',
-                        unsafe_allow_html=True)
+            with st.container(key="ctx_map"):
+                st.markdown('<div class="gf-label">On the map</div>', unsafe_allow_html=True)
+                outlet_map(service, ctx["focus"], [r["restaurant_id"] for r in (ctx["recs"] or [])][:3], height=220)
+                st.markdown('<div class="gf-legend"><span><i style="background:#1E5A47"></i>In focus</span>'
+                            '<span><i style="background:#B4651E"></i>Suggested</span>'
+                            '<span><i style="background:#2B4C7E"></i>You</span>'
+                            '<span><i style="background:#9AA59F"></i>Other outlets</span></div>',
+                            unsafe_allow_html=True)
+            st.markdown(layout.SIDE_END, unsafe_allow_html=True)
+        speech_output()
+        components.html(layout.fit_script(len(st.session_state.messages), nonce=step), height=0)
 
 
 def page_explore(service: ReservationService) -> None:

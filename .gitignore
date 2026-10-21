@@ -5,3 +5,4 @@ __pycache__/
 data/*.db*
 evals/report.json
 .streamlit/secrets.toml
+voice_samples.html

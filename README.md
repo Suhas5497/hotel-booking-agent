@@ -65,7 +65,7 @@ The brief asks for Llama 3.x 8B or a similar small model. Groq retired `llama-3.
 ### Tests and evaluation
 
 ```bash
-python -m unittest discover -s tests -t .    # 99 offline tests, no API key needed
+python -m unittest discover -s tests -t .    # 106 offline tests, no API key needed
 python tests/ui_walkthrough.py               # clicks through every screen with a scripted model
 python -m evals.run_evals                    # live run against the real model, writes evals/report.json
 ```
@@ -102,11 +102,19 @@ Turn on **Voice** (top of the chat) or tap **Talk to Gia** on the start screen. 
 How it works:
 
 - **Listening** uses Whisper (`whisper-large-v3-turbo`) through the same provider and key as the chat model, so a Groq key covers both. To use another speech-to-text service, set `STT_BASE_URL`, `STT_API_KEY` and `STT_MODEL` in `.env`. With a local Ollama chat model you'll need one of these, since Ollama has no speech-to-text endpoint.
-- **Speaking** uses Sarvam Bulbul v3 with the male voice `shubh`, a little quicker and more expressive than default so Gia sounds cheerful. Put your key in `.env` as `SARVAM_API_KEY` (from dashboard.sarvam.ai). To change the voice set `SARVAM_SPEAKER` (other male voices: `aditya`, `kabir`, `rohan`, `rahul`, `amit`, `dev`), and tune `SARVAM_PACE` (0.5-2.0) and `SARVAM_TEMPERATURE` (0.01-1.0, higher is livelier). It speaks English, Hindi, Hinglish and Kannada. Repeated lines are cached so they're only paid for once. Without a key, or if Sarvam fails, the browser's free built-in voice reads the line instead. `python -m goodfoods.diagnose` checks the voice too.
+- **Speaking** uses Sarvam Bulbul v3 with the male voice `shubh`, a little quicker and more expressive than default so Gia sounds cheerful. Gia reads her whole reply **word for word**, one sentence after another, and her speech bubble shows each sentence as she says it (live subtitles). Only things a voice can't read are rewritten: ₹ becomes rupees, ★ becomes stars, booking codes are spelled out and masked phone numbers become "the number ending 3 2 1 0". Put your key in `.env` as `SARVAM_API_KEY` (from dashboard.sarvam.ai). To hear several male voices side by side, run `python -m goodfoods.voice_samples` and open the `voice_samples.html` it writes; it shows the two `.env` lines for the voice you pick. You can also tune `SARVAM_PACE` (0.5-2.0) and `SARVAM_TEMPERATURE` (0.01-1.0, higher is livelier). It speaks English, Hindi, Hinglish and Kannada; sentences are voiced in parallel so Gia starts quickly, and repeated lines are cached. Without a key, or if Sarvam fails, the browser's free voice reads the same sentences instead. `python -m goodfoods.diagnose` checks the voice too.
 - Browsers only let a page talk after you've tapped something, which is why Gia greets you aloud when you switch voice on rather than the instant the page opens.
 - The mic needs permission and works on `localhost` or over HTTPS.
 
 Voice is a layer on top of the chat: what you say goes to Gia as an ordinary message, so all the booking rules and the explicit "yes" before saving still apply.
+
+## The screen
+
+Everything fits on one screen, so nothing important scrolls out of view:
+
+- **Left, the chat:** Gia and her speech bubble at the top, then a chat box that scrolls inside itself (the newest message is always at the bottom; scroll up inside it to read older ones), then the quick actions, mic and type box.
+- **Right, the booking panel:** a **booking status** tracker (outlet → time & details → confirm → booked, or find → change → confirm → done when changing a booking), then the step you're on: the booking form, the review card, the ticket or change/cancel, then the outlet in focus and the map.
+- On phones the chat comes first and the booking panel follows below.
 
 ## The booking flow
 
@@ -277,6 +285,8 @@ goodfoods/
   ui_art.py             illustrations for each restaurant style
   voice.py              speech-to-text (Whisper) and text prepared for the browser to speak
   mascot.py             Gia's moments and animated stage
+  layout.py             one-screen layout: sizes the chat box and keeps the newest message in view
+  voice_samples.py      hear several Sarvam voices side by side
 static/gia/             Gia's pose images (served by Streamlit)
   diagnose.py           connection check
   demo_prep.py          finds full slots for demos

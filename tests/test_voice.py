@@ -86,8 +86,9 @@ class Speakable(unittest.TestCase):
                  "1. **Skyline Grill**, Electronic City · ₹1,760 · 4.7★ · rooftop\n"
                  "2. Sakura – HSR Layout · ₹1,580 · 4.9★ · quiet zone\nWhich one would you like?")
         out = voice.speakable(reply)
-        self.assertIn("Option 1: Skyline Grill, Electronic City, 1,760 rupees, 4.7 stars", out)
-        self.assertIn("Option 2: Sakura, HSR Layout, 1,580 rupees, 4.9 stars", out)
+        self.assertIn("1. Skyline Grill, Electronic City, 1,760 rupees, 4.7 stars, rooftop.", out)
+        self.assertIn("2. Sakura, HSR Layout, 1,580 rupees, 4.9 stars, quiet zone.", out)
+        self.assertNotIn("Option", out, "Gia reads the reply as written, without adding words")
         self.assertTrue(out.endswith("Which one would you like?"))
         for sym in ("₹", "★", "*", "·", "\n"):
             self.assertNotIn(sym, out)
@@ -110,7 +111,7 @@ class Speakable(unittest.TestCase):
     def test_script_is_safe_json(self):
         js = voice.speak_script('He said "</script><b>hi"', "en-IN")
         payload = json.loads(js.split("var p = ", 1)[1].split(";\n", 1)[0])
-        self.assertEqual(payload["text"], 'He said "</script><b>hi"')
+        self.assertEqual(payload["lines"][0]["text"], 'He said "</script><b>hi"')
         self.assertEqual(js.count("</script>"), 1, "text must not be able to close the script tag")
 
 
@@ -181,8 +182,55 @@ class SarvamVoice(unittest.TestCase):
         self.assertEqual((s.api_key, s.speaker, s.pace, s.temperature), ("k", "aditya", 2.0, 0.75))
 
     def test_script_carries_audio(self):
-        js = voice.speak_script("Hi", "en-IN", audio=b"ID3abc")
+        js = voice.speak_script(["Hi.", "Bye."], "en-IN", audio=[b"ID3abc", b"RIFFxyz"])
         payload = json.loads(js.split("var p = ", 1)[1].split(";\n", 1)[0])
-        self.assertTrue(payload["audio"].startswith("data:audio/mpeg;base64,"))
-        self.assertEqual(voice.audio_mime(b"RIFF....WAVE"), "audio/wav")
-        self.assertEqual(json.loads(voice.speak_script("Hi").split("var p = ", 1)[1].split(";\n", 1)[0])["audio"], "")
+        self.assertEqual([l["text"] for l in payload["lines"]], ["Hi.", "Bye."])
+        self.assertTrue(payload["lines"][0]["audio"].startswith("data:audio/mpeg;base64,"))
+        self.assertTrue(payload["lines"][1]["audio"].startswith("data:audio/wav;base64,"))
+        plain = json.loads(voice.speak_script(["Hi."]).split("var p = ", 1)[1].split(";\n", 1)[0])
+        self.assertEqual(plain["lines"][0]["audio"], "")
+        mismatched = json.loads(voice.speak_script(["a.", "b."], audio=[b"ID3"]).split("var p = ", 1)[1].split(";\n", 1)[0])
+        self.assertTrue(all(l["audio"] == "" for l in mismatched["lines"]), "never mix Sarvam and browser voices")
+
+
+
+class WordForWord(unittest.TestCase):
+    REPLY = ("I'm not sure which GoodFoods outlet is near “Valuable Price Hotel.” Could you tell me the Bengaluru "
+             "area (like Indiranagar, Koramangala, etc.) so I can suggest the nearest GoodFoods restaurants?")
+
+    def test_reply_is_read_in_full(self):
+        lines = voice.split_for_speech(voice.speakable(self.REPLY))
+        self.assertEqual(" ".join(lines), self.REPLY, "every word, in order")
+        self.assertEqual(len(lines), 2)
+
+    def test_list_numbers_and_abbreviations_do_not_split(self):
+        lines = voice.split_for_speech(voice.speakable(
+            "Here are three spots:\n1. GoodFoods Biryani Co. – ₹720/person, 4.7★.\n2. Trattoria – ₹1,210/person.\nWhich one?"))
+        self.assertEqual(lines, ["Here are three spots: 1. GoodFoods Biryani Co., 720 rupees per person, 4.7 stars.",
+                                 "2. Trattoria, 1,210 rupees per person.", "Which one?"])
+
+    def test_sentence_after_a_number_still_splits(self):
+        lines = voice.split_for_speech("Your code is G F 7 K Q 2 M D for the number ending 3 2 1 0. See you Thursday.")
+        self.assertEqual(lines[-1], "See you Thursday.")
+
+    def test_long_sentence_breaks_at_commas(self):
+        long = "We have " + ", ".join(f"option number {i}" for i in range(30)) + "."
+        lines = voice.split_for_speech(long, max_len=120)
+        self.assertTrue(all(len(l) <= 120 for l in lines))
+        self.assertEqual(" ".join(lines).replace("  ", " "), long)
+
+    def test_lines_voiced_in_parallel_or_not_at_all(self):
+        calls = []
+
+        def fake(text, lang="en-IN", settings=None):
+            calls.append(text)
+            if text == "bad.":
+                raise VoiceError("nope")
+            return b"ID3" + text.encode()
+
+        tts = voice.TTSSettings(api_key="k")
+        with mock.patch.object(voice, "synthesize", fake):
+            self.assertEqual(voice.synthesize_lines(["a.", "b."], "en-IN", tts), [b"ID3a.", b"ID3b."])
+            with self.assertRaises(VoiceError):
+                voice.synthesize_lines(["a.", "bad."], "en-IN", tts)
+        self.assertIsNone(voice.synthesize_lines(["a."], "en-IN", voice.TTSSettings(api_key="")))

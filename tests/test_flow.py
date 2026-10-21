@@ -61,3 +61,22 @@ class FlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BookingTracker(unittest.TestCase):
+    def test_booking_steps(self):
+        from goodfoods.flow import booking_progress
+        states = lambda r: [s for _, s in r["steps"]]
+        self.assertEqual(states(booking_progress("options")), ["current", "todo", "todo", "todo"])
+        self.assertEqual(states(booking_progress("details", "Sakura")), ["done", "current", "todo", "todo"])
+        self.assertEqual(states(booking_progress("review", "Sakura", "make_reservation")), ["done", "done", "current", "todo"])
+        done = booking_progress("done", "Sakura", None, "confirmed", "GF-7KQ2MD")
+        self.assertEqual(states(done), ["done"] * 4)
+        self.assertIn("GF-7KQ2MD", done["note"])
+
+    def test_change_or_cancel_steps(self):
+        from goodfoods.flow import booking_progress
+        r = booking_progress("review", "Sakura", "cancel_reservation")
+        self.assertEqual(r["title"], "Change or cancel")
+        self.assertEqual([s for _, s in r["steps"]], ["done", "done", "current", "todo"])
+        self.assertEqual(booking_progress("manage")["steps"][0], ("Find booking", "current"))

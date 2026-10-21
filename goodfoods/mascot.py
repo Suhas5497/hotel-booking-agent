@@ -124,7 +124,7 @@ def _generated_css() -> str:
 
 
 def _sparkles() -> str:
-    spots = [(132, 30, 16), (150, 80, 11), (26, 56, 12), (152, 134, 9), (18, 126, 10), (112, 10, 9)]
+    spots = [(112, 22, 14), (128, 64, 10), (20, 44, 11), (130, 110, 8), (14, 100, 9), (94, 6, 8)]
     return ('<div class="gia-sparks" aria-hidden="true">' + "".join(
         f'<i style="left:{x}px;top:{y}px;width:{s}px;height:{s}px;animation-delay:{i * 0.09:.2f}s"></i>'
         for i, (x, y, s) in enumerate(spots)) + "</div>")
@@ -153,22 +153,22 @@ def stage_html(moment: str, base: str = "app/static/gia", line: str | None = Non
             f'<div class="gia-loop"><div class="gia-idlewrap{idle}"><div class="gia-once{once}"><div class="gia-talk">'
             f'<div class="gia-breathe">{poses}</div></div></div></div></div>'
             f'{"" if m.fx == "rings" else fx}</div>'
-            f'<div class="gia-bubble" aria-hidden="true"><span>{text}</span>'
+            f'<div class="gia-bubble" aria-hidden="true"><span class="gia-line">{text}</span>'
             f'<span class="gia-bars"><i></i><i></i><i></i></span></div></div>')
 
 
 STAGE_CSS = """
-.gia-stage { --gia-k: .8; position: relative; height: 240px; margin: 4px 0 8px; border-radius: 18px; overflow: hidden;
-  display: grid; grid-template-columns: 178px minmax(0, 1fr); align-items: center; color: #17201C;
-  background: radial-gradient(118px 118px at 89px 62%, #FFFFFF 0 52%, rgba(255,255,255,.45) 78%, transparent 100%),
+.gia-stage { --gia-k: .6; position: relative; height: 176px; margin: 4px 0 8px; border-radius: 18px; overflow: hidden;
+  display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; color: #17201C;
+  background: radial-gradient(96px 96px at 75px 62%, #FFFFFF 0 52%, rgba(255,255,255,.45) 78%, transparent 100%),
               linear-gradient(180deg, #F1F5FA, #E6EDF5); }
 .gia-spot { position: relative; height: 100%; }
-.gia-disc { position: absolute; left: 14px; bottom: 14px; width: 150px; height: 150px; border-radius: 50%;
+.gia-disc { position: absolute; left: 14px; bottom: 10px; width: 122px; height: 122px; border-radius: 50%;
   background: radial-gradient(circle at 50% 42%, #FFFFFF 0 58%, #EEF3F8 100%); box-shadow: inset 0 -6px 14px rgba(23,32,28,.05); }
-.gia-floor { position: absolute; left: 48px; bottom: 13px; width: 82px; height: 10px; border-radius: 50%;
+.gia-floor { position: absolute; left: 42px; bottom: 9px; width: 66px; height: 10px; border-radius: 50%;
   background: rgba(23,32,28,.16); filter: blur(3px); }
 .gia-loop, .gia-idlewrap, .gia-once, .gia-talk, .gia-breathe { position: absolute; inset: 0; transform-origin: 50% 92%; }
-.gia-pose { position: absolute; left: 50%; bottom: 12px; height: 160px; width: auto;
+.gia-pose { position: absolute; left: 50%; bottom: 8px; height: 160px; width: auto;
   transform: translateX(-50%); user-select: none; pointer-events: none; animation: giaPoseIn .46s cubic-bezier(.2,.9,.25,1.25) both; }
 .gia-pose.gia-first { animation: giaPoseIn .46s cubic-bezier(.2,.9,.25,1.25) both, giaFadeOut .4s ease-in 2.5s forwards; }
 .gia-pose.gia-then { opacity: 0; animation: giaPoseIn .5s cubic-bezier(.2,.9,.25,1.25) 2.75s forwards; }
@@ -185,20 +185,20 @@ STAGE_CSS = """
 .gia-once.gia-bump { animation: giaBump .65s cubic-bezier(.2,.9,.3,1.4) .15s both; }
 .gia-once.gia-jump { animation: giaJump 1.1s cubic-bezier(.3,.6,.4,1) .1s 2 both; }
 .gia-stage.gia-talking .gia-talk { animation: giaTalk .3s ease-in-out infinite alternate; }
-.gia-rings { position: absolute; left: 89px; bottom: 89px; }
+.gia-rings { position: absolute; left: 75px; bottom: 71px; }
 .gia-rings i { position: absolute; left: -75px; top: -75px; width: 150px; height: 150px; border-radius: 50%;
-  border: 2px solid #1E5A47; animation: giaRing 1.8s cubic-bezier(.2,.6,.3,1) infinite; }
+  border: 2px solid #1E5A47; transform-origin: center; animation: giaRing 1.8s cubic-bezier(.2,.6,.3,1) infinite; }
 .gia-rings i:nth-child(2) { animation-delay: .9s; }
-.gia-bulb { position: absolute; left: 24px; top: 22px; width: 50px; height: 50px; border-radius: 50%; opacity: 0; pointer-events: none;
+.gia-bulb { position: absolute; left: 18px; top: 10px; width: 42px; height: 42px; border-radius: 50%; opacity: 0; pointer-events: none;
   background: radial-gradient(circle, rgba(255,214,90,.95) 0, rgba(255,214,90,.35) 45%, transparent 70%); animation: giaBulb 1.1s ease-in-out .2s 3; }
 .gia-sparks { position: absolute; inset: 0; pointer-events: none; }
 .gia-sparks i { position: absolute; background: #F2B930; opacity: 0; animation: giaSpark 1s ease-out .2s forwards;
   clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }
 .gia-confetti { position: absolute; inset: 0; pointer-events: none; }
-.gia-confetti i { position: absolute; left: 86px; top: 96px; width: 7px; height: 11px; border-radius: 2px; opacity: 0;
+.gia-confetti i { position: absolute; left: 72px; top: 72px; width: 7px; height: 11px; border-radius: 2px; opacity: 0;
   animation: giaConfetti 1.6s cubic-bezier(.2,.7,.4,1) forwards; }
-.gia-bubble { position: relative; justify-self: start; max-width: 360px; margin-right: 14px; padding: 12px 14px; background: #FFFFFF;
-  border-radius: 16px; font-weight: 600; font-size: 15px; line-height: 1.38;
+.gia-bubble { position: relative; justify-self: start; max-width: 440px; max-height: 150px; overflow: hidden; margin-right: 14px;
+  padding: 11px 14px; background: #FFFFFF; border-radius: 16px; font-weight: 600; font-size: 14.5px; line-height: 1.4;
   box-shadow: 0 1px 2px rgba(23,32,28,.08), 0 10px 22px rgba(23,32,28,.08); animation: giaBubble .4s cubic-bezier(.2,.9,.3,1.2) .1s both; }
 .gia-bubble::before { content: ""; position: absolute; left: -6px; top: 50%; width: 14px; height: 14px; background: #FFFFFF;
   transform: translateY(-50%) rotate(45deg); border-radius: 2px 0 2px 2px; }
@@ -236,10 +236,10 @@ STAGE_CSS = """
 @keyframes giaBubble { from { transform: translateY(6px) scale(.97); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes giaBar { from { height: 3px; } to { height: 12px; } }
 @media (max-width: 640px) {
-  .gia-stage { --gia-k: .7; height: 214px; grid-template-columns: 150px minmax(0, 1fr); }
-  .gia-disc { width: 128px; height: 128px; left: 11px; } .gia-floor { left: 37px; width: 72px; }
-  .gia-rings { left: 75px; bottom: 77px; } .gia-confetti i { left: 72px; }
-  .gia-bubble { font-size: 14px; margin-right: 10px; }
+  .gia-stage { --gia-k: .5; height: 146px; grid-template-columns: 120px minmax(0, 1fr); }
+  .gia-disc { width: 100px; height: 100px; left: 10px; } .gia-floor { left: 33px; width: 54px; }
+  .gia-rings { left: 60px; bottom: 58px; } .gia-confetti i { left: 58px; top: 58px; }
+  .gia-bubble { font-size: 13.5px; margin-right: 10px; max-height: 120px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .gia-stage *, .gia-stage { animation: none !important; transition: none !important; }

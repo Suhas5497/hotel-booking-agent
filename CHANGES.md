@@ -1,5 +1,25 @@
 # Changes from goodfoods-agent
 
+## New: one-screen layout, word-for-word voice with subtitles
+
+- **One screen, nothing scrolls away.** Gia and her bubble stay at the top of the chat. The chat box has its
+  own scroll: the newest message is always shown, and you scroll up inside it to read older ones (a click
+  doesn't yank you back down unless a new message arrived). Quick actions, mic and type box stay fixed below.
+  The box resizes with the window.
+- **Booking panel on the right.** A booking status tracker (outlet → time & details → confirm → booked; find →
+  change → confirm → done for changes) sits above the step you're on. The booking form, review card, ticket
+  and change/cancel moved here from under the chat. The start options moved into Gia's greeting message.
+- **Gia reads every word.** Her whole reply, exactly as written, one sentence at a time. Only symbols, codes
+  and masked phone numbers are read differently. Speaking in sentences stops browsers cutting long replies off.
+- **Live subtitles.** Gia's bubble shows the sentence she's saying.
+- **Faster start with Sarvam.** All sentences are voiced in parallel; a reply is either all Sarvam or all
+  browser voice, never a mix.
+- **Voice samples:** `python -m goodfoods.voice_samples` makes a page to hear several male voices, in English
+  and Hinglish, with the `.env` lines to switch.
+- Clearer Sarvam error messages (the service's own message, not raw output).
+- Tests: word-for-word reading and sentence splitting, parallel voicing, booking tracker, and walkthrough
+  checks that the form, review card and ticket are in the booking panel. Total 106.
+
 ## New: Gia's voice (Sarvam Bulbul)
 
 - Gia speaks with Sarvam Bulbul v3, male voice `shubh`, pace 1.1 and expressiveness 0.75 for a cheerful
@@ -107,4 +127,4 @@ message.
 - `tests/test_fixes.py`: 19 new tests, one or more per fix.
 - `tests/ui_walkthrough.py`: now also checks that a phone-only lookup hides change/cancel and that
   unlocking with the code brings them back.
-- Total: 99 offline tests (was 55), all passing.
+- Total: 106 offline tests (was 55), all passing.

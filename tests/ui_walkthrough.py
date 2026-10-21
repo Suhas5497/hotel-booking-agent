@@ -153,10 +153,23 @@ sys.modules["streamlit"] = st
 SPOKEN = []
 _components = types.ModuleType("streamlit.components")
 _v1 = types.ModuleType("streamlit.components.v1")
-_v1.html = lambda body, **k: SPOKEN.append(json.loads(body.split("var p = ", 1)[1].split(";\n", 1)[0]))
+LAYOUT = []   # the one-screen layout script: message count it saw, and whether it forced a scroll
+
+
+def _component(body, **k):
+    payload = json.loads(body.split("var p = ", 1)[1].split(";\n", 1)[0])
+    (SPOKEN if "lines" in payload else LAYOUT).append(payload)
+
+
+_v1.html = _component
 _components.v1 = _v1
 st.components = _components
 sys.modules["streamlit.components"], sys.modules["streamlit.components.v1"] = _components, _v1
+
+
+def spoken_text(entry):
+    """Everything Gia said in one speech component, sentence by sentence."""
+    return " ".join(l["text"] for l in entry["lines"])
 
 
 class FakeAudio:
@@ -186,6 +199,12 @@ def gia_moments():
     import re
     return [re.search(r'data-moment="([a-z]+)"', l[1][0]).group(1) for l in st.log
             if l[0] == "markdown" and 'class="gia-stage"' in l[1][0]]
+
+
+def in_side_panel(key):
+    """True if the container `key` was drawn inside the booking panel (after it opened)."""
+    names = [l[1][0] for l in st.log if l[0] == "container" and l[1][0]]
+    return key in names and "side_scroll" in names and names.index(key) > names.index("side_scroll")
 
 
 def gia_is(expected):
@@ -242,6 +261,8 @@ gia_is("options")
 first_key = next(k for k in ("pick_1_0",))
 run("choose card -> details form", press=first_key)
 gia_is("picked")
+assert in_side_panel("flow_box"), "booking form should be in the side panel"
+assert in_side_panel("ctx_status"), "booking status tracker missing"
 # 4 fill name/phone and review (needs a time picked: set via pills state)
 rid = st.session_state.picked
 st.session_state[f"bk_{rid}_day"] = "2026-10-17"
@@ -254,9 +275,13 @@ args = {"restaurant_id": rid, "date": "2026-10-17", "time": "20:00", "party_size
 run("review booking -> preview", press="f_review",
     script=[call("make_reservation", args), say("Here's your booking — shall I confirm?")])
 gia_is("confirm")
+assert in_side_panel("review_card"), "review card should be in the side panel"
+assert LAYOUT[-1]["count"] == len(st.session_state.messages), "layout script must see the newest message"
 # 5 confirm
 run("confirm -> ticket", press="rv_yes", script=[call("make_reservation", args), say("You're booked!")])
 gia_is("booked")
+assert in_side_panel("ticket"), "ticket should be in the side panel"
+print("   booking form, review card and ticket are in the side panel")
 code = next(iter(agent.known_codes), None)
 print("   booked code:", code, "rows:", service.db.query("SELECT COUNT(*) n FROM reservations")[0]["n"])
 # 6 change from ticket -> lookup -> list
@@ -298,9 +323,9 @@ run("voice: start screen", press=None)
 assert any(l[2].get("key") == "start_voice" for l in st.log if l[0] == "button"), "no 'Talk to Gia' button"
 SPOKEN.clear()
 run("voice: tap 'Talk to Gia'", press="start_voice")
-assert SPOKEN and "What can I do for you today?" in SPOKEN[-1]["text"], SPOKEN
+assert SPOKEN and "What can I do for you today?" in spoken_text(SPOKEN[-1]), SPOKEN
 assert any(l[0] == "audio_input" for l in st.log), "mic not shown with voice on"
-print("   spoken:", SPOKEN[-1]["text"][:90])
+print("   spoken:", spoken_text(SPOKEN[-1])[:90])
 
 said = "Tomorrow is my anniversary, I need a table for 2 to surprise my wife"
 voice.transcribe = lambda data, settings=None, **k: said
@@ -310,8 +335,8 @@ run("voice: guest speaks", state={"mic_0": FakeAudio(b"RIFF....fake wav")},
                 "Which one would you like?")])
 assert agent.history[-4]["content"] == said or any(m.get("content") == said for m in agent.history), "transcript not sent"
 assert st.session_state.messages[-2]["content"] == "🎤 " + said
-assert "1,580 rupees" in SPOKEN[-1]["text"] and "4.9 stars" in SPOKEN[-1]["text"], SPOKEN[-1]
-print("   spoken:", SPOKEN[-1]["text"][:90])
+assert "1,580 rupees" in spoken_text(SPOKEN[-1]) and "4.9 stars" in spoken_text(SPOKEN[-1]), SPOKEN[-1]
+print("   spoken:", spoken_text(SPOKEN[-1])[:90])
 
 run("voice: same recording is not sent twice", state={"mic_0": FakeAudio(b"RIFF....fake wav")})
 assert st.session_state.messages[-2]["content"] == "🎤 " + said
@@ -319,13 +344,13 @@ assert st.session_state.messages[-2]["content"] == "🎤 " + said
 run("voice: help me choose", press="Help me choose",
     script=[say("For a quiet anniversary surprise I'd pick Sakura in HSR Layout: it's top rated and has a quiet zone.")])
 gia_is("suggestions")
-assert "Sakura" in SPOKEN[-1]["text"]
-print("   spoken:", SPOKEN[-1]["text"][:90])
+assert "Sakura" in spoken_text(SPOKEN[-1])
+print("   spoken:", spoken_text(SPOKEN[-1])[:90])
 
 pick_key = next(l[2]["key"] for l in reversed(st.log) if l[0] == "button" and str(l[2].get("key", "")).startswith("pick_"))
 run("voice: choose a card", press=pick_key)
-assert "Choose your day, guests and time" in SPOKEN[-1]["text"], SPOKEN[-1]
-print("   spoken:", SPOKEN[-1]["text"][:90])
+assert "Choose your day, guests and time" in spoken_text(SPOKEN[-1]), SPOKEN[-1]
+print("   spoken:", spoken_text(SPOKEN[-1])[:90])
 
 
 def mic_fails(*a, **k):
@@ -335,14 +360,14 @@ def mic_fails(*a, **k):
 voice.transcribe = mic_fails
 assert "listening" not in gia_moments()
 run("voice: mic error is shown and spoken", state={f"mic_{st.session_state.mic_n}": FakeAudio(b"noise")})
-assert any(l[0] == "WARNING" for l in st.log) and "didn't catch" in SPOKEN[-1]["text"]
+assert any(l[0] == "WARNING" for l in st.log) and "didn't catch" in spoken_text(SPOKEN[-1])
 gia_is("thinking")
 
 # Sarvam voice: with a key, the spoken line carries Gia's audio clip; if Sarvam fails, the browser voice is used
 os.environ["SARVAM_API_KEY"] = "test-key"
-voice.synthesize = lambda text, lang="en-IN", settings=None: b"ID3 gia clip"
+voice.synthesize = lambda text, lang="en-IN", settings=None: b"ID3 gia clip"   # used per sentence
 run("voice: Sarvam clip", typed="Which one is best?", script=[say("I'd pick Sakura in HSR Layout.")])
-assert SPOKEN[-1]["audio"].startswith("data:audio/mpeg;base64,"), SPOKEN[-1]
+assert all(l["audio"].startswith("data:audio/mpeg;base64,") for l in SPOKEN[-1]["lines"]), SPOKEN[-1]
 
 
 def sarvam_down(*a, **k):
@@ -351,7 +376,7 @@ def sarvam_down(*a, **k):
 
 voice.synthesize = sarvam_down
 run("voice: Sarvam down -> browser voice", typed="Which one again?", script=[say("Still Sakura!")])
-assert SPOKEN[-1]["audio"] == "" and SPOKEN[-1]["text"].startswith("Still Sakura"), SPOKEN[-1]
+assert all(l["audio"] == "" for l in SPOKEN[-1]["lines"]) and spoken_text(SPOKEN[-1]).startswith("Still Sakura"), SPOKEN[-1]
 del os.environ["SARVAM_API_KEY"]
 print("   Sarvam clip used, then browser voice when Sarvam failed")
 

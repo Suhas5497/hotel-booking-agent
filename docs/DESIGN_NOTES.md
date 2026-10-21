@@ -54,7 +54,7 @@ I started with Llama 3.1 8B on Groq. Groq retired it in August 2026, so the defa
 
 ## Testing
 
-- **99 offline tests** cover the booking rules, date parsing, the MCP protocol, and the agent's behaviour when the model misbehaves.
+- **106 offline tests** cover the booking rules, date parsing, the MCP protocol, and the agent's behaviour when the model misbehaves.
 - **A UI walkthrough** clicks through every screen of the app with a scripted model.
 - **The live evaluation** runs the real model through 12 single requests and 6 full conversations, then checks the database for the right outcome.
 

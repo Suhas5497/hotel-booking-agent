@@ -103,3 +103,46 @@ def directions_url(outlet_id: str, area: str) -> str:
     """Google Maps link to the outlet's (demo) location in its neighbourhood."""
     lat, lng = catalog.outlet_coords(outlet_id, area)
     return f"https://www.google.com/maps/search/?api=1&query={lat:.5f},{lng:.5f}"
+
+
+# ----------------------------------------------------------------------------- booking status tracker
+
+BOOK_STEPS = ("Outlet", "Time & details", "Confirm", "Booked")
+MANAGE_STEPS = ("Find booking", "Choose change", "Confirm", "Done")
+
+
+def booking_progress(step: str, outlet: str | None = None, pending_tool: str | None = None,
+                     done_status: str | None = None, code: str | None = None) -> dict:
+    """What the Booking status tracker shows: the flow's title, each step's state
+    (done / current / todo) and a one-line note. Pure, so it is unit-tested."""
+    manage = (step in ("manage", "modify") or pending_tool in ("modify_reservation", "cancel_reservation")
+              or done_status in ("modified", "cancelled"))
+    labels = MANAGE_STEPS if manage else BOOK_STEPS
+    if step == "done" or done_status:
+        current = len(labels)          # everything done
+    elif pending_tool:
+        current = 2
+    elif step in ("details", "modify"):
+        current = 1
+    elif step == "manage":
+        current = 1 if outlet else 0
+    else:
+        current = 0
+    states = ["done" if i < current else "current" if i == current else "todo" for i in range(len(labels))]
+    if manage:
+        title = "Change or cancel"
+        note = {"cancelled": f"Booking {code or ''} is cancelled.".replace("  ", " "),
+                "modified": f"Booking {code or ''} is updated.".replace("  ", " ")}.get(
+            done_status or "", "Check the details, then confirm." if pending_tool else
+            "Pick what to change below." if current == 1 else "Find your booking with your mobile number.")
+    else:
+        title = "Your booking"
+        if done_status == "confirmed":
+            note = f"Confirmed{' · code ' + code if code else ''}. See you there!"
+        elif pending_tool:
+            note = "Check the details below, then confirm. Nothing is saved until you do."
+        elif current == 1:
+            note = "Choose the day, guests and time, then add your name and mobile."
+        else:
+            note = "Tell Gia what you'd like, then choose an outlet."
+    return {"title": title, "steps": list(zip(labels, states)), "note": note, "outlet": outlet}
