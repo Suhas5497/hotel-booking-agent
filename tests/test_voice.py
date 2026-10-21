@@ -86,9 +86,10 @@ class Speakable(unittest.TestCase):
                  "1. **Skyline Grill**, Electronic City · ₹1,760 · 4.7★ · rooftop\n"
                  "2. Sakura – HSR Layout · ₹1,580 · 4.9★ · quiet zone\nWhich one would you like?")
         out = voice.speakable(reply)
-        self.assertIn("1. Skyline Grill, Electronic City, 1,760 rupees, 4.7 stars, rooftop.", out)
-        self.assertIn("2. Sakura, HSR Layout, 1,580 rupees, 4.9 stars, quiet zone.", out)
-        self.assertNotIn("Option", out, "Gia reads the reply as written, without adding words")
+        self.assertIn("The first one is Skyline Grill in Electronic City. It's rated 4.7, about 1,760 rupees per person, "
+                      "and has a rooftop.", out)
+        self.assertIn("The second is Sakura in HSR Layout. It's rated 4.9, about 1,580 rupees per person, "
+                      "and has a quiet zone.", out)
         self.assertTrue(out.endswith("Which one would you like?"))
         for sym in ("₹", "★", "*", "·", "\n"):
             self.assertNotIn(sym, out)
@@ -143,7 +144,7 @@ class SarvamVoice(unittest.TestCase):
         self.assertEqual(seen["headers"]["Api-subscription-key"], "sk-sarvam")
         b = seen["body"]
         self.assertEqual((b["text"], b["language_code"], b["model"], b["speaker"]), ("Hi! I'm Gia.", "en-IN", "bulbul:v3", "shubh"))
-        self.assertEqual((b["pace"], b["temperature"], b["output_audio_codec"]), (1.1, 0.75, "mp3"))
+        self.assertEqual((b["pace"], b["temperature"], b["output_audio_codec"]), (1.0, 0.65, "mp3"))
         self.assertNotIn("pitch", b, "pitch is v2-only; v3 rejects it")
 
     def test_repeated_lines_are_cached(self):
@@ -179,18 +180,20 @@ class SarvamVoice(unittest.TestCase):
         env = {"SARVAM_API_KEY": " k ", "SARVAM_SPEAKER": "Aditya", "SARVAM_PACE": "9", "SARVAM_TEMPERATURE": "oops"}
         with mock.patch.dict("os.environ", env):
             s = voice.load_tts_settings()
-        self.assertEqual((s.api_key, s.speaker, s.pace, s.temperature), ("k", "aditya", 2.0, 0.75))
+        self.assertEqual((s.api_key, s.speaker, s.pace, s.temperature), ("k", "aditya", 2.0, 0.65))
 
     def test_script_carries_audio(self):
-        js = voice.speak_script(["Hi.", "Bye."], "en-IN", audio=[b"ID3abc", b"RIFFxyz"])
-        payload = json.loads(js.split("var p = ", 1)[1].split(";\n", 1)[0])
-        self.assertEqual([l["text"] for l in payload["lines"]], ["Hi.", "Bye."])
-        self.assertTrue(payload["lines"][0]["audio"].startswith("data:audio/mpeg;base64,"))
-        self.assertTrue(payload["lines"][1]["audio"].startswith("data:audio/wav;base64,"))
-        plain = json.loads(voice.speak_script(["Hi."]).split("var p = ", 1)[1].split(";\n", 1)[0])
-        self.assertEqual(plain["lines"][0]["audio"], "")
-        mismatched = json.loads(voice.speak_script(["a.", "b."], audio=[b"ID3"]).split("var p = ", 1)[1].split(";\n", 1)[0])
-        self.assertTrue(all(l["audio"] == "" for l in mismatched["lines"]), "never mix Sarvam and browser voices")
+        load = lambda js: json.loads(js.split("var p = ", 1)[1].split(";\n", 1)[0])
+        one = load(voice.speak_script(["Hi.", "Bye."], "en-IN", clips=[(b"ID3abc", 0, 2)]))
+        self.assertEqual([l["text"] for l in one["lines"]], ["Hi.", "Bye."])
+        self.assertEqual(len(one["clips"]), 1, "one natural clip for the whole reply")
+        self.assertTrue(one["clips"][0]["audio"].startswith("data:audio/mpeg;base64,"))
+        self.assertEqual((one["clips"][0]["from"], one["clips"][0]["to"]), (0, 2))
+        per_line = load(voice.speak_script(["Hi.", "Bye."], audio=[b"ID3abc", b"RIFFxyz"]))
+        self.assertTrue(per_line["clips"][1]["audio"].startswith("data:audio/wav;base64,"))
+        self.assertEqual(load(voice.speak_script(["Hi."]))["clips"], [])
+        partial = load(voice.speak_script(["a.", "b."], clips=[(b"ID3", 0, 1)]))
+        self.assertEqual(partial["clips"], [], "clips must cover the whole reply; otherwise the browser voice reads it all")
 
 
 
@@ -206,8 +209,8 @@ class WordForWord(unittest.TestCase):
     def test_list_numbers_and_abbreviations_do_not_split(self):
         lines = voice.split_for_speech(voice.speakable(
             "Here are three spots:\n1. GoodFoods Biryani Co. – ₹720/person, 4.7★.\n2. Trattoria – ₹1,210/person.\nWhich one?"))
-        self.assertEqual(lines, ["Here are three spots: 1. GoodFoods Biryani Co., 720 rupees per person, 4.7 stars.",
-                                 "2. Trattoria, 1,210 rupees per person.", "Which one?"])
+        self.assertEqual(lines, ["Here are three spots: The first one is Biryani Co. It's rated 4.7, about 720 rupees per person.",
+                                 "The second is Trattoria. It's about 1,210 rupees per person.", "Which one?"])
 
     def test_sentence_after_a_number_still_splits(self):
         lines = voice.split_for_speech("Your code is G F 7 K Q 2 M D for the number ending 3 2 1 0. See you Thursday.")
@@ -234,3 +237,40 @@ class WordForWord(unittest.TestCase):
             with self.assertRaises(VoiceError):
                 voice.synthesize_lines(["a.", "bad."], "en-IN", tts)
         self.assertIsNone(voice.synthesize_lines(["a."], "en-IN", voice.TTSSettings(api_key="")))
+
+
+
+class NaturalSpeech(unittest.TestCase):
+    def test_days_months_dates_times(self):
+        from datetime import date
+        out = voice._say_dates_and_times("Sat, 17 Oct 2026 · 20:00. Also 2026-10-22 at 19:30, Thu 22 Oct 8:00 PM, on Sat.",
+                                          today=date(2026, 10, 21))
+        self.assertEqual(out, "Saturday, 17 October · 8 PM. Also Thursday 22 October at 7:30 PM, "
+                              "Thursday 22 October 8 PM, on Saturday.")
+        self.assertIn("2027", voice._say_dates_and_times("2027-01-05", today=date(2026, 10, 21)))
+        self.assertEqual(voice._say_dates_and_times("He sat down. Oct is busy.", today=date(2026, 10, 21)),
+                         "He sat down. Oct is busy.", "only short names next to a date are expanded")
+
+    def test_option_like_the_user_asked(self):
+        out = voice.speakable("1. **Skyline Grill**, Indiranagar · ₹1,760 · 4.7★ · bar, bbq platter, pulled pork")
+        self.assertEqual(out, "The first one is Skyline Grill in Indiranagar. It's rated 4.7, about 1,760 rupees per person, "
+                              "and has a bar, bbq platter and pulled pork.")
+
+    def test_other_numbered_lists_still_read(self):
+        self.assertEqual(voice.speakable("Steps:\n1. Pick a time\n2. Confirm"),
+                         "Steps: The first one is Pick a time. The second is Confirm.")
+
+    def test_whole_reply_in_one_clip(self):
+        self.assertEqual(voice.group_lines(["a" * 50] * 3), [(0, 3)])
+        self.assertEqual(voice.group_lines(["a" * 900] * 3, max_chars=2000), [(0, 2), (2, 3)])
+        calls = []
+        with mock.patch.object(voice, "synthesize", lambda t, l="en-IN", s=None: calls.append(t) or b"ID3"):
+            clips = voice.synthesize_groups(["Hi there.", "Which one?"], "en-IN", voice.TTSSettings(api_key="k"))
+        self.assertEqual(calls, ["Hi there. Which one?"])
+        self.assertEqual(clips, [(b"ID3", 0, 2)])
+
+    def test_echo_of_gias_own_voice(self):
+        reply = "Here are three GoodFoods spots in Marathahalli. Which one would you like?"
+        self.assertTrue(voice.sounds_like_echo("here are three goodfoods spots in marathahalli which one", reply))
+        self.assertFalse(voice.sounds_like_echo("Book the second one for 8 pm tomorrow please", reply))
+        self.assertFalse(voice.sounds_like_echo("yes", reply), "short answers are never treated as echoes")

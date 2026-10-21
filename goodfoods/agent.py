@@ -42,7 +42,7 @@ MAX_TOOL_RESULT_CHARS = 3500
 # Details worth remembering across turns, taken from the arguments of successful tool calls.
 REMEMBERED_ARGS = {"restaurant_id": "restaurant_id", "date": "date", "time": "time", "party_size": "party_size",
                    "customer_name": "customer_name", "phone": "phone", "confirmation_code": "confirmation_code",
-                   "new_date": "date", "new_time": "time", "new_party_size": "party_size"}
+                   "new_date": "date", "new_time": "time", "new_party_size": "party_size", "new_name": "customer_name"}
 
 AFFIRM_RE = re.compile(
     r"^\s*(yes|yeah|yep|yup|ya|sure|ok(ay)?|confirm(ed)?|go ahead|please do|do it|book it|book|"

@@ -1,5 +1,29 @@
 # Changes from goodfoods-agent
 
+## Fixes after the first real run
+
+- **Chat box too tall (mic and type box off screen).** Streamlit wraps a fixed-height container in more than
+  one element; the resize only shrank the inner one. Every fixed-height layer is now sized, never past the
+  chat card, and the header is one compact row. Tested at 1366×927 against three possible nestings.
+- **Gia kept talking when you tapped the mic** (and the mic could record her). Tapping the mic or typing
+  now stops her at once, and a recording that is mostly her own last reply is ignored.
+- **Dates and times read literally.** "Sat"/"Oct" are said in full when next to a date, "2026-10-22" becomes
+  "Thursday 22 October" (year only if it isn't this year), "20:00" becomes "8 PM". The prompt also asks
+  the model to write dates and times that way.
+- **More natural voice.** The whole reply is one Sarvam clip (no tone reset every sentence), subtitles follow
+  the playback position; pace 1.0 and expressiveness 0.65 by default. Option lists are spoken as
+  "The first one is Skyline Grill in Indiranagar. It's rated 4.7, about 1,760 rupees per person, and has a
+  bar, bbq platter and pulled pork."
+- **Stuck in change/cancel mode.** After a booking lookup, the booking panel stayed on "Find booking" even
+  when Gia moved on to new options or a new booking. It now leaves that mode.
+- **"Found it!" when nothing was found.** Gia now thinks and says she couldn't find a booking on that number.
+- **Name changes.** `modify_reservation` can change the name on a booking (Gia had promised it but couldn't).
+- **Fewer loops when changing a booking.** The prompt now says a change needs the full code and phone, to
+  ask for a hidden code once, to suggest calling the outlet if they don't have it, and never to promise a
+  change that hasn't been made.
+- Tests: natural speech (days, months, dates, times, lists), one-clip grouping, echo check, not-found
+  moment, and a walkthrough step where the mic hears Gia herself. Total 111.
+
 ## New: one-screen layout, word-for-word voice with subtitles
 
 - **One screen, nothing scrolls away.** Gia and her bubble stay at the top of the chat. The chat box has its
@@ -127,4 +151,4 @@ message.
 - `tests/test_fixes.py`: 19 new tests, one or more per fix.
 - `tests/ui_walkthrough.py`: now also checks that a phone-only lookup hides change/cancel and that
   unlocking with the code brings them back.
-- Total: 106 offline tests (was 55), all passing.
+- Total: 111 offline tests (was 55), all passing.

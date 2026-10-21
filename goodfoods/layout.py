@@ -20,47 +20,61 @@ import json
 
 CHAT_END = '<div class="gia-chat-end"></div>'
 SIDE_END = '<div class="gia-side-end"></div>'
+CHAT_HEIGHT = 300   # the height given to st.container; the script recognises the box by it
+SIDE_HEIGHT = 600
 
 
 def fit_script(message_count: int, force_scroll: bool = False, nonce: str = "") -> str:
-    payload = json.dumps({"count": message_count, "force": force_scroll, "nonce": nonce})
+    payload = json.dumps({"count": message_count, "force": force_scroll, "nonce": nonce,
+                          "chatH": CHAT_HEIGHT, "sideH": SIDE_HEIGHT})
     return """<script>
 (function () {
   var p = %s;
   var W = window;
   try { if (window.parent && window.parent.document) W = window.parent; } catch (e) {}
   var D = W.document;
-  function scroller(el) {
-    while (el && el !== D.body) {
-      var oy = W.getComputedStyle(el).overflowY;
-      if ((oy === "auto" || oy === "scroll") && el.clientHeight > 0) return el;
+  // Streamlit wraps a fixed-height container in more than one element: the one carrying the
+  // height and the one that scrolls can differ. Walk up from the marker, never past `boundary`
+  // (the chat card / side column), and size every element that scrolls, has an inline pixel
+  // height, or has exactly the height we gave the container (`given`) or one we set earlier.
+  function sized(marker, boundary, given) {
+    var out = [], el = marker && marker.parentElement;
+    while (el && el !== D.body && !(boundary && (el === boundary || el.contains(boundary)))) {
+      var cs = W.getComputedStyle(el), oy = cs.overflowY, h = parseFloat(cs.height);
+      var fixed = /px$/.test(el.style.height || "") || Math.abs(h - given) < 2 || el.hasAttribute("data-gia-sized");
+      if (fixed || oy === "auto" || oy === "scroll") { out.push(el); el.setAttribute("data-gia-sized", "1"); }
       el = el.parentElement;
     }
-    return null;
+    return out;
   }
+  function setH(list, h) {
+    list.forEach(function (el) { el.style.height = h + "px"; el.style.maxHeight = h + "px"; });
+  }
+  function toBottom(list) { list.forEach(function (el) { el.scrollTop = el.scrollHeight; }); }
   function fit(scrollToEnd) {
     var narrow = W.innerWidth < 760, vh = W.innerHeight;
-    var end = D.querySelector(".gia-chat-end"), card = D.querySelector(".st-key-chat_card");
-    var box = end && scroller(end);
-    if (box) {
-      var below = card ? Math.max(0, card.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom) : 180;
-      var h = narrow ? Math.round(vh * 0.58) : Math.round(vh - box.getBoundingClientRect().top - below - 20);
-      h = Math.max(narrow ? 260 : 300, h);
-      box.style.height = h + "px"; box.style.maxHeight = h + "px";
-      if (scrollToEnd) box.scrollTop = box.scrollHeight;
+    var card = D.querySelector(".st-key-chat_card");
+    var chat = sized(D.querySelector(".gia-chat-end"), card, p.chatH);
+    if (chat.length) {
+      var outer = chat[chat.length - 1];
+      var below = card ? Math.max(0, card.getBoundingClientRect().bottom - outer.getBoundingClientRect().bottom) : 180;
+      var h = narrow ? Math.round(vh * 0.55)
+                     : Math.round(vh - outer.getBoundingClientRect().top - below - 24);
+      setH(chat, Math.max(narrow ? 240 : 220, h));
+      if (scrollToEnd) toBottom(chat);
     }
-    var side = D.querySelector(".gia-side-end"), sbox = side && scroller(side);
-    if (sbox) {
-      if (narrow) { sbox.style.height = ""; sbox.style.maxHeight = ""; }
+    var side = sized(D.querySelector(".gia-side-end"), D.querySelector(".st-key-ctx_col"), p.sideH);
+    if (side.length) {
+      if (narrow) side.forEach(function (el) { el.style.height = ""; el.style.maxHeight = ""; });
       else {
-        var h2 = Math.max(320, Math.round(vh - sbox.getBoundingClientRect().top - 20));
-        sbox.style.height = h2 + "px"; sbox.style.maxHeight = h2 + "px";
+        var top = side[side.length - 1].getBoundingClientRect().top;
+        setH(side, Math.max(300, Math.round(vh - top - 24)));
       }
     }
   }
   var changed = p.force || W.__giaMsgCount !== p.count;
   W.__giaMsgCount = p.count;
-  [0, 80, 250, 600, 1200].forEach(function (t) { setTimeout(function () { fit(changed); }, t); });
+  [0, 80, 250, 600, 1200, 2000].forEach(function (t) { setTimeout(function () { fit(changed); }, t); });
   W.__giaFit = fit;
   if (!W.__giaFitBound) {
     W.__giaFitBound = true;

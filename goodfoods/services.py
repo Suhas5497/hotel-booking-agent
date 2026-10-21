@@ -618,13 +618,14 @@ class ReservationService:
                         "confirmation, then call lookup_reservation again with phone and confirmation_code."}
 
     def modify_reservation(self, confirmation_code, phone, new_date=None, new_time=None,
-                           new_party_size=None, special_requests=None, dry_run=False) -> dict:
+                           new_party_size=None, special_requests=None, new_name=None, dry_run=False) -> dict:
         res = self._verified(confirmation_code, phone)
         if res["status"] != "confirmed":
             raise ToolError("NOT_MODIFIABLE", f"Booking {res['code']} is {res['status']}.")
-        if not any([new_date, new_time, new_party_size, special_requests]):
+        if not any([new_date, new_time, new_party_size, special_requests, new_name]):
             raise ToolError("NOTHING_TO_CHANGE", "No change was specified.",
-                            hint="Ask what the guest wants to change: date, time, party size or requests.")
+                            hint="Ask what the guest wants to change: date, time, party size, name or requests.")
+        name = validate_name(new_name) if new_name else res["customer_name"]
         r = self.resolve_restaurant(res["restaurant_id"])
         d, t, notes = self._parse_when(r, new_date or res["res_date"], new_time or res["res_time"])
         party = validate_party(new_party_size or res["party_size"])
@@ -637,13 +638,13 @@ class ReservationService:
                                 alternative_times_same_day=self._alternatives(r, d, t, party, exclude_code=res["code"]))
             before = self._public(res)
             after = before | {"date": d.isoformat(), "day": human_date(d), "time": fmt_time(t),
-                              "party_size": party, "special_requests": req}
+                              "party_size": party, "special_requests": req, "name": name}
             if dry_run:
                 return {"status": "ready_to_modify", "before": before, "after": after,
                         **({"notes": notes} if notes else {})}
             conn.execute("UPDATE reservations SET res_date=?, res_time=?, party_size=?, table_size=?, "
-                         "special_requests=?, updated_at=? WHERE code=?",
-                         (d.isoformat(), fmt_time(t), party, size, req,
+                         "special_requests=?, customer_name=?, updated_at=? WHERE code=?",
+                         (d.isoformat(), fmt_time(t), party, size, req, name,
                           self.clock().isoformat(timespec="seconds"), res["code"]))
             self._audit(conn, "modify", res["code"], {"before": before, "after": after})
         return {"status": "modified", "reservation": after}

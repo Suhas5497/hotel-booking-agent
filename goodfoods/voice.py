@@ -125,12 +125,113 @@ def _spell_code(m: re.Match) -> str:
     return "G F " + " ".join(m.group(1))
 
 
+_WEEKDAYS = {"Mon": "Monday", "Tue": "Tuesday", "Tues": "Tuesday", "Wed": "Wednesday", "Thu": "Thursday",
+             "Thur": "Thursday", "Thurs": "Thursday", "Fri": "Friday", "Sat": "Saturday", "Sun": "Sunday"}
+_MONTHS = {"Jan": "January", "Feb": "February", "Mar": "March", "Apr": "April", "Jun": "June", "Jul": "July",
+           "Aug": "August", "Sep": "September", "Sept": "September", "Oct": "October", "Nov": "November", "Dec": "December"}
+_ORDINAL_OPENERS = {1: "The first one is", 2: "The second is", 3: "And the third is", 4: "The fourth is", 5: "The fifth is"}
+_FEATURE_WORDS = {"bar": "a bar", "rooftop": "a rooftop", "quiet zone": "a quiet zone", "quiet": "a quiet setting",
+                  "wifi": "Wi-Fi", "wi-fi": "Wi-Fi", "kid-friendly": "a kid-friendly space", "kid friendly": "a kid-friendly space",
+                  "pet-friendly": "a pet-friendly space", "pet friendly": "a pet-friendly space"}
+
+
+def _join_and(items: list[str]) -> str:
+    items = [i for i in items if i]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1] if items else ""
+
+
+def _say_dates_and_times(s: str, today=None) -> str:
+    """"2026-10-17" -> "Saturday 17 October"; "Sat, 17 Oct 2026" -> "Saturday, 17 October";
+    "20:00" -> "8 PM"; "8:00 PM" -> "8 PM". The year is dropped when it's this year."""
+    from datetime import date as _date
+    from .config import now as _now
+    year = (today or _now().date()).year
+
+    def iso(m):
+        try:
+            d = _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return m.group(0)
+        return d.strftime("%A ") + str(d.day) + d.strftime(" %B") + ("" if d.year == year else f" {d.year}")
+    s = re.sub(r"\b(20\d\d)-(\d\d)-(\d\d)\b", iso, s)
+    s = re.sub(r"\b(Mon|Tues?|Wed|Thu(?:rs?)?|Fri|Sat|Sun)\b(?=,?\s*\d)", lambda m: _WEEKDAYS[m.group(1)], s)
+    s = re.sub(r"(?<=\bon\s)(Mon|Tues?|Wed|Thu(?:rs?)?|Fri|Sat|Sun)\b", lambda m: _WEEKDAYS[m.group(1)], s)
+    s = re.sub(r"(?<=\d\s)(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\b", lambda m: _MONTHS[m.group(1)], s)
+    s = re.sub(r"\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\b(?=\s+\d)", lambda m: _MONTHS[m.group(1)], s)
+    s = re.sub(r"(\d{1,2} [A-Z][a-z]+),? " + str(year) + r"\b", r"\1", s)
+
+    def hhmm(m):
+        h, mm, ampm = int(m.group(1)), m.group(2), (m.group(3) or "").upper().replace(".", "")
+        if not ampm:
+            if h > 23:
+                return m.group(0)
+            ampm = "PM" if h >= 12 else "AM"
+            h = h % 12 or 12
+        return f"{h} {ampm}" if mm == "00" else f"{h}:{mm} {ampm}"
+    s = re.sub(r"\b([01]?\d|2[0-3]):([0-5]\d)(?:\s*([AaPp]\.?[Mm]\.?))?(?!\d)", hhmm, s)
+    return s
+
+
+def _natural_list_item(n: int, item: str) -> str:
+    """"Skyline Grill – Indiranagar · ₹1,760/person · 4.7★ · bar, live music"
+    -> "The first one is Skyline Grill in Indiranagar. It's rated 4.7, about 1,760 rupees per person,
+       and has a bar and live music." Falls back to "The first one is <item>" for other lists."""
+    opener = _ORDINAL_OPENERS.get(n, f"Number {n} is")
+    raw = re.sub(r"[*_`]+", "", item).strip().rstrip(".")
+    parts = [x.strip() for x in re.split(r"\s*[·|]\s*|\s+[–—-]\s+|,\s+|:\s+", raw) if x.strip()]
+    if not parts:
+        return f"{opener} {item}"
+    name = re.sub(r"^GoodFoods\s+", "", parts[0])
+    area = price = rating = None
+    features: list[str] = []
+    areas = {a.lower(): a for a in catalog.AREAS}
+    for part in parts[1:]:
+        low = part.lower()
+        pm = re.search(r"₹\s?([\d,]+)", part) or re.search(r"([\d,]+)\s*rupees", low)
+        rm = re.search(r"(\d(?:\.\d)?)\s*(?:★|stars?)", part) or re.search(r"rated\s+(\d(?:\.\d)?)", low)
+        if pm and not price:
+            price = pm.group(1)
+        elif rm and not rating:
+            rating = rm.group(1)
+        elif low in areas and not area:
+            area = areas[low]
+        elif low.startswith("in ") and low[3:] in areas and not area:
+            area = areas[low[3:]]
+        else:
+            features.append(_FEATURE_WORDS.get(low, part))
+    if not (price or rating or area):
+        return f"{opener} {item.strip()}"
+    first = f"{opener} {name}" + (f" in {area}" if area else "") + "."
+    facts = []
+    if rating:
+        facts.append(f"rated {rating}")
+    if price:
+        facts.append(f"about {price} rupees per person")
+    sentence = "It's " + ", ".join(facts) if facts else ""
+    if features:
+        sentence = (sentence + ", and has " if sentence else "It has ") + _join_and(features)
+    return first + (" " + sentence + "." if sentence else "")
+
+
+def _natural_lists(s: str) -> str:
+    """Numbered option lists become spoken sentences ("The first one is…, The second is…")."""
+    lines = s.split("\n")
+    out = []
+    for line in lines:
+        m = re.match(r"^\s*(\d+)[.)]\s+(.+)$", line)
+        out.append(_natural_list_item(int(m.group(1)), m.group(2)) if m else line)
+    return "\n".join(out)
+
+
 def speakable(text: str) -> str:
-    """The reply as Gia will say it: the same words, in the same order. Only things a voice
-    can't read are rewritten: ₹ and ★, per-unit slashes, booking codes (spelled out),
-    masked phone numbers, links and markdown symbols."""
+    """The reply as Gia will say it: the same words, in the same order, with what a voice can't
+    read said naturally: option lists become "The first one is…", short days and months are
+    said in full, dates and times are said the way people say them, ₹ and ★ become rupees and
+    stars, booking codes are spelled out, masked phone numbers become "the number ending…"."""
     s = str(text or "")
     s = re.sub(r"```.*?```", " ", s, flags=re.S)                      # code blocks
+    s = _natural_lists(s)                                              # "1. X · ₹…" -> "The first one is X…"
+    s = _say_dates_and_times(s)                                        # Sat -> Saturday, 2026-10-17, 20:00
     s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)                     # [label](url) -> label
     s = re.sub(r"https?://\S+", " ", s)                                # bare links
     s = re.sub(r"\+91\s*\**\s*(\d{4})\b", lambda m: "the number ending " + " ".join(m.group(1)), s)
@@ -210,8 +311,8 @@ class TTSSettings:
     api_key: str
     model: str = "bulbul:v3"
     speaker: str = "shubh"          # a male Bulbul v3 voice; others: aditya, kabir, rohan, rahul, amit...
-    pace: float = 1.1               # a touch quicker than normal sounds brighter
-    temperature: float = 0.75       # higher = more expressive (Sarvam's range 0.01-1.0, default 0.6)
+    pace: float = 1.0               # natural speed
+    temperature: float = 0.65       # a little livelier than Sarvam's default 0.6 without sounding forced
     base_url: str = "https://api.sarvam.ai"
     timeout_s: float = 20.0
 
@@ -227,8 +328,8 @@ def load_tts_settings() -> TTSSettings:
         api_key=os.getenv("SARVAM_API_KEY", "").strip(),
         model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v3").strip(),
         speaker=os.getenv("SARVAM_SPEAKER", "shubh").strip().lower(),
-        pace=num("SARVAM_PACE", "1.1", 0.5, 2.0),
-        temperature=num("SARVAM_TEMPERATURE", "0.75", 0.01, 1.0),
+        pace=num("SARVAM_PACE", "1.0", 0.5, 2.0),
+        temperature=num("SARVAM_TEMPERATURE", "0.65", 0.01, 1.0),
         base_url=os.getenv("SARVAM_BASE_URL", "https://api.sarvam.ai").rstrip("/"),
     )
 
@@ -315,63 +416,123 @@ def synthesize_lines(lines: list[str], lang: str, settings: TTSSettings | None =
             raise
 
 
+def group_lines(lines: list[str], max_chars: int = 2000) -> list[tuple[int, int]]:
+    """Consecutive sentences joined into as few pieces as fit Sarvam's limit, as (start, end) ranges.
+    One clip per reply keeps Gia's tone flowing naturally instead of resetting every sentence."""
+    groups, start, size = [], 0, 0
+    for i, line in enumerate(lines):
+        if i > start and size + len(line) + 1 > max_chars:
+            groups.append((start, i))
+            start, size = i, 0
+        size += len(line) + 1
+    if lines:
+        groups.append((start, len(lines)))
+    return groups
+
+
+def synthesize_groups(lines: list[str], lang: str, settings: TTSSettings | None = None) -> list[tuple[bytes, int, int]] | None:
+    """Sarvam clips for the reply: usually one clip for the whole reply. None without a key;
+    raises VoiceError if any piece fails, so the caller uses the browser voice for all of it."""
+    s = settings or load_tts_settings()
+    if not s.api_key or not lines:
+        return None
+    groups = group_lines(lines)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(4, len(groups))) as pool:
+        futures = [pool.submit(synthesize, " ".join(lines[a:b]), lang, s) for a, b in groups]
+        return [(f.result(), a, b) for f, (a, b) in zip(futures, groups)]
+
+
+def sounds_like_echo(heard: str, said: str) -> bool:
+    """True if what the mic heard is mostly Gia's own last reply (the mic picked up her voice)."""
+    import difflib
+    words = lambda t: re.findall(r"[a-z0-9ऀ-ॿ]+", (t or "").lower())
+    h, g = words(heard), words(speakable(said)) + words(said)
+    if len(h) < 5 or not g:
+        return False
+    gset = set(g)
+    coverage = sum(1 for w in h if w in gset) / len(h)
+    return coverage >= 0.8 or difflib.SequenceMatcher(None, h, words(speakable(said))).ratio() >= 0.6
+
+
 def speak_script(lines: list[str] | str | None, lang: str = "en-IN", rate: float = 1.0,
-                 audio: list[bytes] | bytes | None = None) -> str:
+                 audio: list[bytes] | bytes | None = None,
+                 clips: list[tuple[bytes, int, int]] | None = None) -> str:
     """HTML/JS for a zero-height Streamlit component that speaks Gia's reply (or, with None, stops).
 
-    `lines` are the sentences in order; `audio` the matching Sarvam clips (optional). Sentences
-    play one after another; Gia's speech bubble shows each sentence as it is spoken (live
-    subtitles) and her stage gets `gia-talking` so she bounces in time. If there are no clips,
-    or the browser refuses to play them, the browser's own voice reads the same sentences.
-    Everything runs in the *parent* page: browsers only allow sound after the guest has
-    interacted with the page, and a fresh component iframe hasn't been."""
+    `lines` are the reply's sentences. `clips` are Sarvam audio clips, each covering sentences
+    [start, end) (usually one clip for the whole reply); `audio` is the older one-clip-per-line
+    form. While a clip plays, Gia's bubble shows the sentence being spoken (worked out from the
+    playback position) and her stage gets `gia-talking`. Without clips, or if the browser refuses
+    to play them, the browser's own voice reads the same sentences one by one. Tapping the mic or
+    typing in the chat box stops her. Everything runs in the *parent* page: browsers only allow
+    sound after the guest has interacted with the page, and a fresh component iframe hasn't been."""
     import base64
     if isinstance(lines, str):
         lines = [lines]
     lines = [l for l in (lines or []) if l and l.strip()]
     if isinstance(audio, (bytes, bytearray)):
         audio = [bytes(audio)]
-    clips = audio if audio and len(audio) == len(lines) else None
-    items = [{"text": t, "audio": (f"data:{audio_mime(clips[i])};base64,{base64.b64encode(clips[i]).decode()}" if clips else "")}
-             for i, t in enumerate(lines)]
-    payload = json.dumps({"lines": items, "lang": lang, "rate": rate, "nonce": secrets.token_hex(4)})
+    if clips is None and audio and len(audio) == len(lines):
+        clips = [(a, i, i + 1) for i, a in enumerate(audio)]
+    if clips and (clips[0][1] != 0 or clips[-1][2] != len(lines)):
+        clips = None   # clips must cover the whole reply, or Gia would go quiet part-way
+    clip_items = [{"audio": f"data:{audio_mime(c)};base64,{base64.b64encode(c).decode()}", "from": a, "to": b}
+                  for c, a, b in (clips or [])]
+    payload = json.dumps({"lines": [{"text": t} for t in lines], "clips": clip_items, "lang": lang, "rate": rate,
+                          "nonce": secrets.token_hex(4)})
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")   # text can't close the <script>
     return """<script>
 (function () {
   var p = %s;
   var W = window;
   try { if (window.parent && window.parent.document) W = window.parent; } catch (e) {}
+  var D = W.document;
   function talking(on) {   // Gia's stage bounces while she speaks (CSS in goodfoods/mascot.py)
     try {
-      var stages = W.document.querySelectorAll(".gia-stage");
+      var stages = D.querySelectorAll(".gia-stage");
       for (var i = 0; i < stages.length; i++) stages[i].classList.toggle("gia-talking", on);
     } catch (e) {}
   }
   function subtitle(text) {  // the bubble shows the sentence being spoken
     try {
-      var spans = W.document.querySelectorAll(".gia-stage .gia-line");
-      for (var i = 0; i < spans.length; i++) spans[i].textContent = text;
+      var spans = D.querySelectorAll(".gia-stage .gia-line");
+      for (var i = 0; i < spans.length; i++) if (spans[i].textContent !== text) spans[i].textContent = text;
     } catch (e) {}
+  }
+  // Tapping the mic or typing to Gia stops her, so she never talks over the guest (or into the mic).
+  if (!W.__giaStopBound) {
+    W.__giaStopBound = true;
+    var interrupt = function (e) {
+      var t = e.target;
+      if (t && t.closest && (t.closest('[data-testid="stAudioInput"]') || t.closest('[data-testid="stChatInput"]'))) {
+        if (W.__giaStop) W.__giaStop();
+      }
+    };
+    D.addEventListener("pointerdown", interrupt, true);
+    D.addEventListener("keydown", interrupt, true);
   }
   // Stop whatever Gia was saying before.
   try { if (W.__giaStop) W.__giaStop(); } catch (e) {}
   var synth = W.speechSynthesis || window.speechSynthesis || null;
   try { if (synth) synth.cancel(); } catch (e) {}
   talking(false);
-  var lines = p.lines || [];
+  var lines = (p.lines || []).map(function (l) { return l.text; });
   if (!lines.length) return;
 
-  var stopped = false, current = null, idx = 0;
-  var useAudio = lines.every(function (l) { return !!l.audio; });
+  var stopped = false, current = null, raf = null;
   var A = W.Audio || window.Audio;
-  var players = useAudio ? lines.map(function (l) { var a = new A(l.audio); a.preload = "auto"; return a; }) : [];
+  var clips = (p.clips || []).map(function (c) { var a = new A(c.audio); a.preload = "auto"; return {a: a, from: c.from, to: c.to}; });
   W.__giaStop = function () {
     stopped = true;
-    try { if (current && current.pause) current.pause(); } catch (e) {}
+    try { if (current) current.pause(); } catch (e) {}
     try { if (synth) synth.cancel(); } catch (e) {}
+    if (raf) { W.cancelAnimationFrame(raf); raf = null; }
     talking(false);
   };
+  function done() { if (raf) { W.cancelAnimationFrame(raf); raf = null; } talking(false); }
 
+  // ---- browser voice: one sentence at a time (long text in one go gets cut off in Chrome)
   function pickVoice() {
     var voices = (synth && synth.getVoices()) || [];
     var lang = p.lang.toLowerCase(), base = lang.split("-")[0];
@@ -379,38 +540,54 @@ def speak_script(lines: list[str] | str | None, lang: str = "en-IN", rate: float
         || voices.find(function (v) { return v.lang && v.lang.toLowerCase().indexOf(base) === 0; })
         || null;
   }
-  function finish() { talking(false); }
-  function next() {
+  function browserFrom(i) {
     if (stopped) return;
-    if (idx >= lines.length) { finish(); return; }
-    var i = idx++, text = lines[i].text;
-    subtitle(text);
-    talking(true);
-    if (useAudio) {
-      var a = players[i];
-      current = a;
-      a.onended = function () { setTimeout(next, 120); };
-      a.onerror = function () { useAudio = false; idx = i; next(); };
-      var started = a.play();
-      if (started && started.catch) started.catch(function () { useAudio = false; idx = i; next(); });
-      return;
-    }
+    if (i >= lines.length) { done(); return; }
     var Utter = W.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
-    if (!synth || !Utter) { finish(); return; }
-    var u = new Utter(text);
+    if (!synth || !Utter) { done(); return; }
+    subtitle(lines[i]);
+    talking(true);
+    var u = new Utter(lines[i]);
     u.lang = p.lang; u.rate = p.rate;
     try { var v = pickVoice(); if (v) u.voice = v; } catch (e) {}   // no matching voice: browser default
-    u.onend = function () { setTimeout(next, 60); };
-    u.onerror = function () { setTimeout(next, 60); };
-    current = null;
+    u.onend = function () { setTimeout(function () { browserFrom(i + 1); }, 60); };
+    u.onerror = function () { setTimeout(function () { browserFrom(i + 1); }, 60); };
     synth.speak(u);
   }
-  if (useAudio || !synth || (synth.getVoices() || []).length) { setTimeout(next, 60); }
-  else {
-    var begun = false;
-    var go = function () { if (!begun) { begun = true; next(); } };
+  function startBrowser(i) {
+    if (!synth || (synth.getVoices() || []).length) { setTimeout(function () { browserFrom(i); }, 60); return; }
+    var begun = false, go = function () { if (!begun) { begun = true; browserFrom(i); } };
     try { synth.addEventListener("voiceschanged", go); } catch (e) {}
     setTimeout(go, 700);
   }
+
+  // ---- Sarvam clips: subtitles follow the playback position, weighted by sentence length
+  function follow(c) {
+    var weights = [], total = 0;
+    for (var i = c.from; i < c.to; i++) { total += lines[i].length + 8; weights.push(total); }
+    (function tick() {
+      if (stopped || current !== c.a) return;
+      var d = c.a.duration, t = c.a.currentTime;
+      if (d && isFinite(d) && d > 0) {
+        var at = (t / d) * total, k = 0;
+        while (k < weights.length - 1 && at > weights[k]) k++;
+        subtitle(lines[c.from + k]);
+      }
+      raf = W.requestAnimationFrame(tick);
+    })();
+  }
+  function playClip(k) {
+    if (stopped) return;
+    if (k >= clips.length) { done(); return; }
+    var c = clips[k];
+    current = c.a;
+    subtitle(lines[c.from]);
+    c.a.onplaying = function () { talking(true); follow(c); };
+    c.a.onended = function () { setTimeout(function () { playClip(k + 1); }, 120); };
+    c.a.onerror = function () { startBrowser(c.from); };
+    var started = c.a.play();
+    if (started && started.catch) started.catch(function () { if (!stopped) startBrowser(c.from); });
+  }
+  if (clips.length) setTimeout(function () { playClip(0); }, 40); else startBrowser(0);
 })();
 </script>""" % payload

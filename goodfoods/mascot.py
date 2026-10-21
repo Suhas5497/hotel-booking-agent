@@ -51,6 +51,7 @@ MOMENTS: dict[str, Moment] = {
     "cancelled": Moment("greeting", "Cancelled. Hope to see you soon!", once="wave"),
     "manage": Moment("searching", "Let's find your booking.", loop="sway", idle=False),
     "found": Moment("confirm", "Found it! What would you like to do?", once="bump"),
+    "notfound": Moment("thinking", "I couldn't find a booking on that number.", loop="tilt", idle=False),
     "modify": Moment("greeting", "Pick the new day or time below.", once="hop"),
     "sorry": Moment("thinking", "Sorry, I couldn't finish that. Please try again.", loop="tilt", idle=False),
     "idle": Moment("greeting", "Anything else I can help with?"),
@@ -88,7 +89,12 @@ def choose_moment(step: str, trace: list | None = None, pending_tool: str | None
            for e in tool_events if not e.detail.get("error")):
         return "options"
     if step == "manage":
-        return "found" if any(e.name == "lookup_reservation" and not e.detail.get("error") for e in tool_events) else "manage"
+        lookups = [e for e in tool_events if e.name == "lookup_reservation"]
+        if not lookups:
+            return "manage"
+        last = lookups[-1]
+        found = not last.detail.get("error") and (last.detail.get("result") or {}).get("reservations")
+        return "found" if found else "notfound"
     if step == "options":
         return "suggestions"   # cards still live and Gia answered without a new search: she's advising
     if reply.strip().endswith("?"):

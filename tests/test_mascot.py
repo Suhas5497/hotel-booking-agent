@@ -22,7 +22,9 @@ class ChooseMoment(unittest.TestCase):
         self.assertEqual(c("done", done_status="modified"), "updated")
         self.assertEqual(c("done", done_status="cancelled"), "cancelled")
         self.assertEqual(c("manage"), "manage")
-        self.assertEqual(c("manage", [tool("lookup_reservation", {"reservations": []})]), "found")
+        self.assertEqual(c("manage", [tool("lookup_reservation", {"reservations": [{"confirmation_code": "GF-****QR"}]})]), "found")
+        self.assertEqual(c("manage", [tool("lookup_reservation", {"reservations": []})]), "notfound",
+                         "no thumbs-up when nothing was found")
         self.assertEqual(c("modify"), "modify")
 
     def test_problems(self):

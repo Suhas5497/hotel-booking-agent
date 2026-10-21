@@ -108,10 +108,11 @@ def build_tools(svc: ReservationService) -> list[Tool]:
              {"type": "object", "properties": {"phone": _PHONE, "confirmation_code": _CODE}, "required": ["phone"]},
              svc.lookup_reservation),
         Tool("modify_reservation",
-             "Change an existing booking's date, time, party size or requests.",
+             "Change an existing booking's date, time, party size, name or requests. Needs the full code and phone.",
              {"type": "object", "properties": {
                  "confirmation_code": _CODE, "phone": _PHONE, "new_date": _DATE, "new_time": _TIME,
-                 "new_party_size": _PARTY, "special_requests": {"type": "string"}, "dry_run": _DRY},
+                 "new_party_size": _PARTY, "new_name": {"type": "string", "description": "New name for the booking"},
+                 "special_requests": {"type": "string"}, "dry_run": _DRY},
               "required": ["confirmation_code", "phone"]},
              svc.modify_reservation, read_only=False),
         Tool("cancel_reservation",

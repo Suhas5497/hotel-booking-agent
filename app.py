@@ -151,7 +151,10 @@ header[data-testid="stHeader"] { background:transparent; }
 .gf-trk.current .l, .gf-trk.done .l { color:var(--gf-ink); font-weight:600; }
 .gf-trk-outlet { font-weight:700; font-size:15px; margin-top:2px; }
 .gf-trk-note { font-size:13px; color:var(--gf-muted); }
-.gf-panel-hint { justify-content:center; padding:6px 0; }
+.gf-panel-hint { justify-content:center; padding:2px 0; }
+.gf-chat-title { font-family:'Newsreader', Georgia, serif; font-weight:600; font-size:22px; line-height:1.15; color:var(--gf-ink);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+@media (max-width: 900px) { .gf-chat-title { font-size:19px; white-space:normal; } }
 [data-testid="stColumn"]:has(.st-key-ctx_col) { align-self:stretch; }
 [data-testid="stMetric"] { background:#FFFFFF; border-radius:16px; padding:18px 20px; box-shadow:0 1px 2px rgba(23,32,28,.04), 0 6px 18px rgba(23,32,28,.05); }
 """ + mascot.STAGE_CSS + """
@@ -242,17 +245,17 @@ def speech_output() -> None:
         return
     lines = voice.split_for_speech(voice.speakable(text)) if text else []
     lang = voice.speech_lang(text or "")
-    audio = None
+    clips = None
     if lines:
         tts = voice.load_tts_settings()
         if tts.api_key:
             try:
-                audio = voice.synthesize_lines(lines, lang, tts)
+                clips = voice.synthesize_groups(lines, lang, tts)   # usually one clip: natural, unbroken tone
             except voice.VoiceError as exc:
                 if not st.session_state.get("tts_warned"):   # say it once, then quietly use the browser voice
                     st.session_state.tts_warned = True
                     st.toast(str(exc))
-    components.html(voice.speak_script(lines, lang, audio=audio), height=0)
+    components.html(voice.speak_script(lines, lang, clips=clips), height=0)
 
 
 GIA_SLOT: dict = {"slot": None}   # the stage placeholder for this run, so waits can update it
@@ -295,6 +298,13 @@ def mic_input() -> str | None:
         speak(str(exc))
         return None
     st.session_state.mic_n = n + 1   # a fresh, empty recorder for the next message
+    msgs = st.session_state.messages
+    last_reply = msgs[-1]["content"] if msgs and msgs[-1]["role"] == "assistant" else ""
+    if voice.sounds_like_echo(text, last_reply):   # the mic picked up Gia herself: don't send it
+        note = "That sounded like my own voice. Tap the mic and say it again."
+        show_gia("thinking", note)
+        st.warning(note)
+        return None
     return text
 
 
@@ -954,22 +964,21 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
         with st.container(key="chat_card"):
             hour = now().hour
             greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
-            h, n, b = st.columns([2.5, 1.5, 1.1], vertical_alignment="center")
-            h.markdown(f'<div class="gf-h1">{greet}. Where shall we eat?</div>'
-                       f'<div class="gf-sub">{service.db.restaurant_count()} outlets across Bengaluru · '
-                       'English, Hindi or Hinglish</div>', unsafe_allow_html=True)
-            area = n.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area",
+            # one compact row, so Gia and the chat get the height
+            h, n, v, b = st.columns([2.3, 1.6, 0.9, 1.0], vertical_alignment="center")
+            h.markdown(f'<div class="gf-chat-title">{greet}. Where shall we eat?</div>', unsafe_allow_html=True)
+            area = n.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area", label_visibility="collapsed",
                                help="Gia will suggest outlets in and around this area.")
             agent.guest_area = None if area == ANYWHERE else area
-            with b:
-                st.toggle("Voice", key="voice_on", on_change=on_voice_toggle,
-                          help="Gia greets you, listens through the mic and reads her replies aloud.")
-                if st.session_state.messages:
-                    st.button("New chat", on_click=new_chat, use_container_width=True)
+            v.toggle("Voice", key="voice_on", on_change=on_voice_toggle,
+                     help="Gia greets you, listens through the mic and reads her replies aloud "
+                          "(English, Hindi or Hinglish).")
+            if st.session_state.messages:
+                b.button("New chat", on_click=new_chat, use_container_width=True)
             GIA_SLOT["slot"] = st.empty()
             show_gia(gia_moment(agent, ctx))
 
-            chat_box = st.container(height=420, border=False, key="chat_scroll")
+            chat_box = st.container(height=layout.CHAT_HEIGHT, border=False, key="chat_scroll")   # resized to the window by layout.fit_script
             with chat_box:
                 with st.chat_message("assistant", avatar=AVATARS["assistant"]):
                     st.markdown(greeting_text())
@@ -1023,6 +1032,10 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
         u["turns"] += 1
         u["llm_ms"] += sum(e.ms for e in turn.trace if e.kind == "llm")
         st.session_state.pop("focus_override", None)   # Gia's tool calls now say which outlet is in focus
+        if _rows_from(turn.trace) or (agent.pending and agent.pending.tool == "make_reservation"):
+            # Gia moved on to a new booking: leave change/cancel mode, or the booking panel stays stuck on it
+            for k in ("manage_mode", "modifying"):
+                st.session_state.pop(k, None)
         if _rows_from(turn.trace):
             st.session_state.pop("picked", None)          # fresh options: nothing chosen yet
         if _result(turn.trace, ("confirmed", "modified", "cancelled")):
@@ -1034,7 +1047,7 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
         st.rerun()   # redraw the step controls and the context panel from the new state
 
     with right, st.container(key="ctx_col"):
-        side = st.container(height=720, border=False, key="side_scroll")
+        side = st.container(height=layout.SIDE_HEIGHT, border=False, key="side_scroll")   # resized to the window by layout.fit_script
         with side:
             booking_status(agent, service, ctx, step)
             booking_panel(agent, service, ctx, step)

@@ -335,7 +335,7 @@ run("voice: guest speaks", state={"mic_0": FakeAudio(b"RIFF....fake wav")},
                 "Which one would you like?")])
 assert agent.history[-4]["content"] == said or any(m.get("content") == said for m in agent.history), "transcript not sent"
 assert st.session_state.messages[-2]["content"] == "🎤 " + said
-assert "1,580 rupees" in spoken_text(SPOKEN[-1]) and "4.9 stars" in spoken_text(SPOKEN[-1]), SPOKEN[-1]
+assert "The first one is Sakura in HSR Layout. It's rated 4.9, about 1,580 rupees per person." in spoken_text(SPOKEN[-1]), SPOKEN[-1]
 print("   spoken:", spoken_text(SPOKEN[-1])[:90])
 
 run("voice: same recording is not sent twice", state={"mic_0": FakeAudio(b"RIFF....fake wav")})
@@ -367,7 +367,7 @@ gia_is("thinking")
 os.environ["SARVAM_API_KEY"] = "test-key"
 voice.synthesize = lambda text, lang="en-IN", settings=None: b"ID3 gia clip"   # used per sentence
 run("voice: Sarvam clip", typed="Which one is best?", script=[say("I'd pick Sakura in HSR Layout.")])
-assert all(l["audio"].startswith("data:audio/mpeg;base64,") for l in SPOKEN[-1]["lines"]), SPOKEN[-1]
+assert len(SPOKEN[-1]["clips"]) == 1 and SPOKEN[-1]["clips"][0]["audio"].startswith("data:audio/mpeg;base64,"), SPOKEN[-1]
 
 
 def sarvam_down(*a, **k):
@@ -376,9 +376,19 @@ def sarvam_down(*a, **k):
 
 voice.synthesize = sarvam_down
 run("voice: Sarvam down -> browser voice", typed="Which one again?", script=[say("Still Sakura!")])
-assert all(l["audio"] == "" for l in SPOKEN[-1]["lines"]) and spoken_text(SPOKEN[-1]).startswith("Still Sakura"), SPOKEN[-1]
+assert SPOKEN[-1]["clips"] == [] and spoken_text(SPOKEN[-1]).startswith("Still Sakura"), SPOKEN[-1]
 del os.environ["SARVAM_API_KEY"]
 print("   Sarvam clip used, then browser voice when Sarvam failed")
+
+# the mic hears Gia herself: that recording must not be sent as the guest's message
+run("voice: Gia answers", typed="Remind me why?",
+    script=[say("For a quiet anniversary surprise I'd pick Sakura in HSR Layout. It is top rated and calm.")])
+voice.transcribe = lambda data, settings=None, **k: "for a quiet anniversary surprise I'd pick Sakura in HSR layout"
+before = len(st.session_state.messages)
+run("voice: mic hears Gia's own voice", state={f"mic_{st.session_state.mic_n}": FakeAudio(b"echo")})
+assert len(st.session_state.messages) == before, "Gia's own voice was sent as a message"
+assert any(l[0] == "WARNING" and "my own voice" in l[1][0] for l in st.log)
+print("   echo of Gia's own voice ignored")
 
 run("voice: turn off hides the mic", state={"voice_on": False}, press=None)
 assert not any(l[0] == "audio_input" for l in st.log), "mic shown with voice off"
