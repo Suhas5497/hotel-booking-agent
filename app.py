@@ -51,6 +51,8 @@ st.markdown("""
 .stApp { background:#F4F5F2; }
 .stApp, .stMarkdown, .stMarkdown p, button, input, textarea { font-family:'Manrope', system-ui, sans-serif !important; }
 .block-container { padding-top:1.4rem; max-width:1320px; }
+/* Streamlit leaves several rem of empty space under the page; trimmed so the one-screen chat doesn't scroll */
+.block-container, [data-testid="stMainBlockContainer"] { padding-bottom:0.75rem !important; }
 header[data-testid="stHeader"] { background:transparent; }
 
 /* header */
@@ -152,6 +154,21 @@ header[data-testid="stHeader"] { background:transparent; }
 .gf-trk-outlet { font-weight:700; font-size:15px; margin-top:2px; }
 .gf-trk-note { font-size:13px; color:var(--gf-muted); }
 .gf-panel-hint { justify-content:center; padding:2px 0; }
+/* One-screen layout: the chat box and the booking panel scroll inside themselves. The CSS height works
+   on its own; goodfoods/layout.py's script then fits it to the exact space left on screen. */
+.st-key-chat_scroll { height:max(240px, calc(100vh - 640px)); overflow-y:auto; overflow-x:hidden;
+  flex-wrap:nowrap; padding-right:6px; overscroll-behavior:contain; }
+.st-key-chat_scroll > div { flex-shrink:0; }
+.st-key-side_scroll { height:calc(100vh - 130px); min-height:300px; overflow-y:auto; overflow-x:hidden;
+  flex-wrap:nowrap; padding-right:6px; overscroll-behavior:contain; }
+.st-key-side_scroll > div { flex-shrink:0; }
+@media (max-height: 820px) and (min-width: 761px) { .st-key-chat_scroll { height:max(170px, calc(100vh - 560px)); } }
+@media (max-width: 760px) {
+  .st-key-chat_scroll { height:60vh; }
+  .st-key-side_scroll { height:auto; overflow:visible; }
+}
+/* the header never wraps "Voice" or the title onto two lines */
+.st-key-voice_on, .st-key-voice_on label, .st-key-voice_on p { white-space:nowrap; }
 .gf-chat-title { font-family:'Newsreader', Georgia, serif; font-weight:600; font-size:22px; line-height:1.15; color:var(--gf-ink);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 @media (max-width: 900px) { .gf-chat-title { font-size:19px; white-space:normal; } }
@@ -204,7 +221,7 @@ def greeting_text() -> str:
     hour = now().hour
     greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
     return (f"{greet}! I'm Gia from GoodFoods. What can I do for you today? "
-            "Pick an option below, or just tell me what you're looking for.")
+            "Pick an option, or just tell me what you're looking for.")
 
 
 def voice_on() -> bool:
@@ -300,6 +317,11 @@ def mic_input() -> str | None:
     st.session_state.mic_n = n + 1   # a fresh, empty recorder for the next message
     msgs = st.session_state.messages
     last_reply = msgs[-1]["content"] if msgs and msgs[-1]["role"] == "assistant" else ""
+    if voice.is_unclear(text):   # noise or a half-heard word ("née"): ask again instead of confusing Gia
+        note = "Sorry, I didn't catch that. Tap the mic and say it again."
+        show_gia("thinking", note)
+        st.warning(note)
+        return None
     if voice.sounds_like_echo(text, last_reply):   # the mic picked up Gia herself: don't send it
         note = "That sounded like my own voice. Tap the mic and say it again."
         show_gia("thinking", note)
@@ -962,11 +984,9 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
 
     with left:
         with st.container(key="chat_card"):
-            hour = now().hour
-            greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
             # one compact row, so Gia and the chat get the height
-            h, n, v, b = st.columns([2.3, 1.6, 0.9, 1.0], vertical_alignment="center")
-            h.markdown(f'<div class="gf-chat-title">{greet}. Where shall we eat?</div>', unsafe_allow_html=True)
+            h, n, v, b = st.columns([1.9, 1.7, 1.15, 1.05], vertical_alignment="center")
+            h.markdown('<div class="gf-chat-title">Where shall we eat?</div>', unsafe_allow_html=True)
             area = n.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area", label_visibility="collapsed",
                                help="Gia will suggest outlets in and around this area.")
             agent.guest_area = None if area == ANYWHERE else area
@@ -978,7 +998,7 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
             GIA_SLOT["slot"] = st.empty()
             show_gia(gia_moment(agent, ctx))
 
-            chat_box = st.container(height=layout.CHAT_HEIGHT, border=False, key="chat_scroll")   # resized to the window by layout.fit_script
+            chat_box = st.container(key="chat_scroll")   # height from CSS (.st-key-chat_scroll), fine-tuned by layout.fit_script
             with chat_box:
                 with st.chat_message("assistant", avatar=AVATARS["assistant"]):
                     st.markdown(greeting_text())
@@ -1047,7 +1067,7 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
         st.rerun()   # redraw the step controls and the context panel from the new state
 
     with right, st.container(key="ctx_col"):
-        side = st.container(height=layout.SIDE_HEIGHT, border=False, key="side_scroll")   # resized to the window by layout.fit_script
+        side = st.container(key="side_scroll")   # height from CSS (.st-key-side_scroll), fine-tuned by layout.fit_script
         with side:
             booking_status(agent, service, ctx, step)
             booking_panel(agent, service, ctx, step)

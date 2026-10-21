@@ -54,16 +54,19 @@ def fit_script(message_count: int, force_scroll: bool = False, nonce: str = "") 
   function fit(scrollToEnd) {
     var narrow = W.innerWidth < 760, vh = W.innerHeight;
     var card = D.querySelector(".st-key-chat_card");
-    var chat = sized(D.querySelector(".gia-chat-end"), card, p.chatH);
+    // The chat box is the keyed container .st-key-chat_scroll (sized by CSS); the marker walk is a fallback.
+    var keyed = D.querySelector(".st-key-chat_scroll");
+    var chat = keyed ? [keyed] : sized(D.querySelector(".gia-chat-end"), card, p.chatH);
     if (chat.length) {
       var outer = chat[chat.length - 1];
       var below = card ? Math.max(0, card.getBoundingClientRect().bottom - outer.getBoundingClientRect().bottom) : 180;
-      var h = narrow ? Math.round(vh * 0.55)
-                     : Math.round(vh - outer.getBoundingClientRect().top - below - 24);
-      setH(chat, Math.max(narrow ? 240 : 220, h));
+      var h = narrow ? Math.round(vh * 0.6)
+                     : Math.round(vh - outer.getBoundingClientRect().top - below - 16);
+      setH(chat, Math.max(narrow ? 240 : (vh < 820 ? 170 : 220), h));
       if (scrollToEnd) toBottom(chat);
     }
-    var side = sized(D.querySelector(".gia-side-end"), D.querySelector(".st-key-ctx_col"), p.sideH);
+    var sideKeyed = D.querySelector(".st-key-side_scroll");
+    var side = sideKeyed ? [sideKeyed] : sized(D.querySelector(".gia-side-end"), D.querySelector(".st-key-ctx_col"), p.sideH);
     if (side.length) {
       if (narrow) side.forEach(function (el) { el.style.height = ""; el.style.maxHeight = ""; });
       else {

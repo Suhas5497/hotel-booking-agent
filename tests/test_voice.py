@@ -86,10 +86,10 @@ class Speakable(unittest.TestCase):
                  "1. **Skyline Grill**, Electronic City · ₹1,760 · 4.7★ · rooftop\n"
                  "2. Sakura – HSR Layout · ₹1,580 · 4.9★ · quiet zone\nWhich one would you like?")
         out = voice.speakable(reply)
-        self.assertIn("The first one is Skyline Grill in Electronic City. It's rated 4.7, about 1,760 rupees per person, "
-                      "and has a rooftop.", out)
-        self.assertIn("The second is Sakura in HSR Layout. It's rated 4.9, about 1,580 rupees per person, "
-                      "and has a quiet zone.", out)
+        self.assertIn("The first one is Skyline Grill in Electronic City. It's 1,760 rupees per person, "
+                      "with a 4.7 star rating, and it has a rooftop.", out)
+        self.assertIn("The second is Sakura in HSR Layout. It's 1,580 rupees per person, "
+                      "with a 4.9 star rating, and it has a quiet zone.", out)
         self.assertTrue(out.endswith("Which one would you like?"))
         for sym in ("₹", "★", "*", "·", "\n"):
             self.assertNotIn(sym, out)
@@ -209,8 +209,8 @@ class WordForWord(unittest.TestCase):
     def test_list_numbers_and_abbreviations_do_not_split(self):
         lines = voice.split_for_speech(voice.speakable(
             "Here are three spots:\n1. GoodFoods Biryani Co. – ₹720/person, 4.7★.\n2. Trattoria – ₹1,210/person.\nWhich one?"))
-        self.assertEqual(lines, ["Here are three spots: The first one is Biryani Co. It's rated 4.7, about 720 rupees per person.",
-                                 "The second is Trattoria. It's about 1,210 rupees per person.", "Which one?"])
+        self.assertEqual(lines, ["Here are three spots: The first one is Biryani Co. It's 720 rupees per person, "
+                                 "with a 4.7 star rating.", "The second is Trattoria. It's 1,210 rupees per person.", "Which one?"])
 
     def test_sentence_after_a_number_still_splits(self):
         lines = voice.split_for_speech("Your code is G F 7 K Q 2 M D for the number ending 3 2 1 0. See you Thursday.")
@@ -253,8 +253,8 @@ class NaturalSpeech(unittest.TestCase):
 
     def test_option_like_the_user_asked(self):
         out = voice.speakable("1. **Skyline Grill**, Indiranagar · ₹1,760 · 4.7★ · bar, bbq platter, pulled pork")
-        self.assertEqual(out, "The first one is Skyline Grill in Indiranagar. It's rated 4.7, about 1,760 rupees per person, "
-                              "and has a bar, bbq platter and pulled pork.")
+        self.assertEqual(out, "The first one is Skyline Grill in Indiranagar. It's 1,760 rupees per person, "
+                              "with a 4.7 star rating, and it has a bar, a barbecue platter and pulled pork.")
 
     def test_other_numbered_lists_still_read(self):
         self.assertEqual(voice.speakable("Steps:\n1. Pick a time\n2. Confirm"),
@@ -274,3 +274,49 @@ class NaturalSpeech(unittest.TestCase):
         self.assertTrue(voice.sounds_like_echo("here are three goodfoods spots in marathahalli which one", reply))
         self.assertFalse(voice.sounds_like_echo("Book the second one for 8 pm tomorrow please", reply))
         self.assertFalse(voice.sounds_like_echo("yes", reply), "short answers are never treated as echoes")
+
+
+
+class SecondRunFixes(unittest.TestCase):
+    def test_bulleted_options_from_the_real_transcript(self):
+        reply = ("Here are three quiet spots for a 9 PM date on Sunday 24 Oct:\n\n"
+                 "* GoodFoods Sakura – Indiranagar, ₹1,520, 4.4★ – private dining, quiet zone, bar.\n"
+                 "* GoodFoods Trattoria – Marathahalli, ₹1,210, 4.7★ – quiet zone, bar, top\u2011rated.\n"
+                 "* GoodFoods Sakura – MG Road, ₹1,890, 4.7★ – quiet zone, bar, wheelchair\u2011accessible.\n\n"
+                 "Which one would you like to book?")
+        out = voice.speakable(reply)
+        self.assertIn("The first one is Sakura in Indiranagar. It's 1,520 rupees per person, with a 4.4 star rating, "
+                      "and it has private dining, a quiet zone and a bar.", out)
+        self.assertIn("The second is Trattoria in Marathahalli. It's 1,210 rupees per person, with a 4.7 star rating, "
+                      "and it has a quiet zone and a bar.", out)
+        self.assertIn("And the third is Sakura on MG Road.", out)
+        self.assertIn("wheelchair access", out)
+        self.assertNotIn("\u2011", out)
+
+    def test_unclear_recordings(self):
+        for heard in ("née", "Née.", "um", "hmm", ""):
+            self.assertTrue(voice.is_unclear(heard), heard)
+        for heard in ("yes", "two", "24", "haan", "हाँ", "Jayanagar", "Sakura", "Saturday", "cheaper",
+                      "Book Sakura for 2"):
+            self.assertFalse(voice.is_unclear(heard), heard)
+
+    def test_calendar_in_prompt(self):
+        from datetime import datetime
+        from goodfoods.config import TZ
+        from goodfoods.prompts import calendar_block, render_system_prompt
+        wed = datetime(2026, 10, 21, 21, 15, tzinfo=TZ)
+        cal = calendar_block(wed)
+        self.assertIn("Sat 24 Oct = 2026-10-24", cal)
+        self.assertIn("This weekend: Saturday 24 October (2026-10-24) and Sunday 25 October (2026-10-25).", cal)
+        self.assertNotIn("Sat 23 Oct", cal)
+        self.assertIn("CALENDAR", render_system_prompt(wed, 75, "Bengaluru"))
+        sun = datetime(2026, 10, 25, 12, 0, tzinfo=TZ)
+        self.assertIn("Saturday 24 October (2026-10-24) and Sunday 25 October", calendar_block(sun))
+
+    def test_controller_lives_in_the_page(self):
+        js = voice.speak_script(["Hi."])
+        self.assertIn("giaInstall", js)
+        self.assertEqual(js.count("</script>"), 1)
+        self.assertIn("stAudioInput", voice._CONTROLLER_JS)
+        self.assertIn("st-key-mic_", voice._CONTROLLER_JS)
+        self.assertNotIn("focusin", voice._CONTROLLER_JS, "only real taps and key presses may stop Gia")

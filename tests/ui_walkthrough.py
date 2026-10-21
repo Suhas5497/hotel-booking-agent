@@ -335,7 +335,7 @@ run("voice: guest speaks", state={"mic_0": FakeAudio(b"RIFF....fake wav")},
                 "Which one would you like?")])
 assert agent.history[-4]["content"] == said or any(m.get("content") == said for m in agent.history), "transcript not sent"
 assert st.session_state.messages[-2]["content"] == "🎤 " + said
-assert "The first one is Sakura in HSR Layout. It's rated 4.9, about 1,580 rupees per person." in spoken_text(SPOKEN[-1]), SPOKEN[-1]
+assert "The first one is Sakura in HSR Layout. It's 1,580 rupees per person, with a 4.9 star rating." in spoken_text(SPOKEN[-1]), SPOKEN[-1]
 print("   spoken:", spoken_text(SPOKEN[-1])[:90])
 
 run("voice: same recording is not sent twice", state={"mic_0": FakeAudio(b"RIFF....fake wav")})
@@ -379,6 +379,13 @@ run("voice: Sarvam down -> browser voice", typed="Which one again?", script=[say
 assert SPOKEN[-1]["clips"] == [] and spoken_text(SPOKEN[-1]).startswith("Still Sakura"), SPOKEN[-1]
 del os.environ["SARVAM_API_KEY"]
 print("   Sarvam clip used, then browser voice when Sarvam failed")
+
+# a half-heard word ("née") is not sent; Gia asks to hear it again
+voice.transcribe = lambda data, settings=None, **k: "née"
+before = len(st.session_state.messages)
+run("voice: unclear recording", state={f"mic_{st.session_state.mic_n}": FakeAudio(b"noise2")})
+assert len(st.session_state.messages) == before and any(l[0] == "WARNING" and "didn't catch" in l[1][0] for l in st.log)
+print("   unclear recording asked again, not sent")
 
 # the mic hears Gia herself: that recording must not be sent as the guest's message
 run("voice: Gia answers", typed="Remind me why?",

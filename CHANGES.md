@@ -1,5 +1,26 @@
 # Changes from goodfoods-agent
 
+## Fixes after the second real run
+
+- **Wrong weekend dates.** Gia offered "Saturday 23 Oct or Sunday 24 Oct" when the weekend was the 24th and
+  25th: the model was working out weekdays itself. The system prompt now carries a two-week calendar and the
+  coming weekend, and Gia must copy dates from it or from tool results.
+- **Mic didn't stop Gia.** Her voice lived in a helper frame that Streamlit deletes on the next screen update,
+  taking the stop button with it. The speech controller now installs itself in the page, so it keeps running
+  and can always be stopped; it recognises the mic by several names.
+- **"née" sent as a message.** Single unclear words (not yes/no, a number, a day, an area or an outlet) and short
+  accented-letter guesses are asked again instead of being sent to Gia.
+- **Bulleted options read raw, special hyphens.** Bullet lists are read like numbered ones, in the style asked
+  for: "It's 560 rupees per person, with a 4.7 star rating, and it has a bar, a barbecue platter and pulled pork".
+  Non-breaking hyphens and spaces are normalised.
+- **"Voi / ce" and a cut-off title.** The header has room for the Voice switch and a shorter title.
+- **Chat box still too tall.** The box and the booking panel are now sized by CSS on their own containers
+  (works even if the fitting script can't run); Streamlit's extra bottom padding is trimmed; short laptop
+  screens get a smaller Gia so the mic and type box stay visible.
+- **"Date night" asked for a time first.** Suggestions now come first, then Gia asks for the day and time.
+- Tests: calendar, unclear recordings, bulleted options from the real transcript, the in-page controller,
+  and a walkthrough step for an unclear recording. Total 115.
+
 ## Fixes after the first real run
 
 - **Chat box too tall (mic and type box off screen).** Streamlit wraps a fixed-height container in more than
@@ -151,4 +172,4 @@ message.
 - `tests/test_fixes.py`: 19 new tests, one or more per fix.
 - `tests/ui_walkthrough.py`: now also checks that a phone-only lookup hides change/cancel and that
   unlocking with the code brings them back.
-- Total: 111 offline tests (was 55), all passing.
+- Total: 115 offline tests (was 55), all passing.

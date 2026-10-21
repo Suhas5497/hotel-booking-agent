@@ -115,6 +115,34 @@ _NOISE = {"you", "thank you", "thanks for watching", "thank you for watching", "
           "music", "[music]", "(music)", "silence", "[silence]"}
 
 
+# One-word answers that are real replies, not noise.
+_SHORT_OK = {"yes", "yeah", "yep", "yup", "no", "nope", "ok", "okay", "sure", "confirm", "cancel", "book", "done",
+             "haan", "ha", "han", "nahi", "na", "ji", "theek", "thik", "stop", "help", "cheaper", "thanks", "first",
+             "second", "third", "today", "tomorrow", "kal", "parso", "tonight", "lunch", "dinner", "breakfast",
+             "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+             "ek", "do", "teen", "char", "chaar", "paanch", "chhe", "saat", "aath", "nau", "das"}
+
+
+def is_unclear(text: str) -> bool:
+    """True for recordings that are almost certainly not a real request: a single word that isn't a
+    known short answer, number, day, area or outlet, or a few words in another script/accents
+    (Whisper hearing noise or Gia's own voice, e.g. "née"). The guest is asked to say it again."""
+    words = re.findall(r"[^\W_]+", (text or "").lower())
+    if not words:
+        return True
+    if re.search(r"[à-öø-ÿœ]", text.lower()) and len(words) <= 3:
+        return True   # accented Latin letters in a short clip: French/Spanish guesses on noise
+    if len(words) > 1:
+        return False
+    w = words[0]
+    if w in _SHORT_OK or w.isdigit() or re.fullmatch(r"[\u0900-\u097f]+", w):
+        return False
+    from .seed import CONCEPTS
+    known = {a.lower() for a in catalog.AREAS} | {c[0].lower().split()[0] for c in CONCEPTS} | \
+        {d.lower() for d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")}
+    return w not in known
+
+
 def _is_noise(text: str) -> bool:
     return text.strip().lower().strip(".!? ") in {n.strip(".!? ") for n in _NOISE}
 
@@ -132,7 +160,11 @@ _MONTHS = {"Jan": "January", "Feb": "February", "Mar": "March", "Apr": "April", 
 _ORDINAL_OPENERS = {1: "The first one is", 2: "The second is", 3: "And the third is", 4: "The fourth is", 5: "The fifth is"}
 _FEATURE_WORDS = {"bar": "a bar", "rooftop": "a rooftop", "quiet zone": "a quiet zone", "quiet": "a quiet setting",
                   "wifi": "Wi-Fi", "wi-fi": "Wi-Fi", "kid-friendly": "a kid-friendly space", "kid friendly": "a kid-friendly space",
-                  "pet-friendly": "a pet-friendly space", "pet friendly": "a pet-friendly space"}
+                  "pet-friendly": "a pet-friendly space", "pet friendly": "a pet-friendly space",
+                  "pure veg": "a pure veg menu", "veg": "a pure veg menu", "bbq": "barbecue", "bbq platter": "a barbecue platter",
+                  "wheelchair-accessible": "wheelchair access", "wheelchair accessible": "wheelchair access",
+                  "valet parking": "valet parking", "valet": "valet parking"}
+_SKIP_FEATURES = {"top-rated", "top rated", "highly rated", "popular"}   # already said by the rating
 
 
 def _join_and(items: list[str]) -> str:
@@ -198,28 +230,42 @@ def _natural_list_item(n: int, item: str) -> str:
         elif low.startswith("in ") and low[3:] in areas and not area:
             area = areas[low[3:]]
         else:
-            features.append(_FEATURE_WORDS.get(low, part))
+            features.append(_FEATURE_WORDS.get(low, re.sub(r"\bbbq\b", "barbecue", part, flags=re.I)))
     if not (price or rating or area):
         return f"{opener} {item.strip()}"
-    first = f"{opener} {name}" + (f" in {area}" if area else "") + "."
-    facts = []
-    if rating:
-        facts.append(f"rated {rating}")
-    if price:
-        facts.append(f"about {price} rupees per person")
-    sentence = "It's " + ", ".join(facts) if facts else ""
+    where = (f" on {area}" if area.endswith("Road") else f" in {area}") if area else ""
+    first = f"{opener} {name}{where}."
+    if price and rating:
+        facts = f"It's {price} rupees per person, with a {rating} star rating"
+    elif price:
+        facts = f"It's {price} rupees per person"
+    elif rating:
+        facts = f"It has a {rating} star rating"
+    else:
+        facts = ""
+    features = [f for f in features if f.lower() not in _SKIP_FEATURES]
     if features:
-        sentence = (sentence + ", and has " if sentence else "It has ") + _join_and(features)
-    return first + (" " + sentence + "." if sentence else "")
+        facts = (facts + ", and it has " if facts else "It has ") + _join_and(features)
+    return first + (" " + facts + "." if facts else "")
 
 
 def _natural_lists(s: str) -> str:
-    """Numbered option lists become spoken sentences ("The first one is…, The second is…")."""
-    lines = s.split("\n")
-    out = []
-    for line in lines:
+    """Option lists, numbered ("1.") or bulleted ("*", "-", "•"), become spoken sentences:
+    "The first one is…", "The second is…". Bullets are counted in order within each list."""
+    out, bullet_n = [], 0
+    for line in s.split("\n"):
         m = re.match(r"^\s*(\d+)[.)]\s+(.+)$", line)
-        out.append(_natural_list_item(int(m.group(1)), m.group(2)) if m else line)
+        b = re.match(r"^\s*[*\-•]\s+(.+)$", line)
+        if m:
+            out.append(_natural_list_item(int(m.group(1)), m.group(2)))
+            bullet_n = 0
+        elif b:
+            bullet_n += 1
+            out.append(_natural_list_item(bullet_n, b.group(1)))
+        else:
+            if line.strip():
+                bullet_n = 0
+            out.append(line)
     return "\n".join(out)
 
 
@@ -229,6 +275,7 @@ def speakable(text: str) -> str:
     said in full, dates and times are said the way people say them, ₹ and ★ become rupees and
     stars, booking codes are spelled out, masked phone numbers become "the number ending…"."""
     s = str(text or "")
+    s = s.replace("\u2011", "-").replace("\u2010", "-").replace("\u00a0", " ").replace("\u202f", " ")   # non-breaking hyphens/spaces
     s = re.sub(r"```.*?```", " ", s, flags=re.S)                      # code blocks
     s = _natural_lists(s)                                              # "1. X · ₹…" -> "The first one is X…"
     s = _say_dates_and_times(s)                                        # Sat -> Saturday, 2026-10-17, 20:00
@@ -455,18 +502,126 @@ def sounds_like_echo(heard: str, said: str) -> bool:
     return coverage >= 0.8 or difflib.SequenceMatcher(None, h, words(speakable(said))).ratio() >= 0.6
 
 
+# The speech controller runs in the main page, not in the component's helper frame: Streamlit
+# deletes that frame on the next screen update, and anything living in it (timers, the
+# "stop" function, the mic listener) would die with it. The frame only installs the
+# controller once (or upgrades it) and hands it the reply.
+CONTROLLER_VERSION = "3"
+_CONTROLLER_JS = r"""
+function giaInstall(W) {
+  var D = W.document;
+  var state = {stopped: true, audio: null, raf: null, timers: []};
+  function talking(on) {   // Gia's stage bounces while she speaks (CSS in goodfoods/mascot.py)
+    var stages = D.querySelectorAll(".gia-stage");
+    for (var i = 0; i < stages.length; i++) stages[i].classList.toggle("gia-talking", on);
+  }
+  function subtitle(text) {  // the bubble shows the sentence being spoken
+    var spans = D.querySelectorAll(".gia-stage .gia-line");
+    for (var i = 0; i < spans.length; i++) if (spans[i].textContent !== text) spans[i].textContent = text;
+  }
+  function later(fn, ms) { var t = W.setTimeout(fn, ms); state.timers.push(t); return t; }
+  function stop() {
+    state.stopped = true;
+    try { if (state.audio) state.audio.pause(); } catch (e) {}
+    state.audio = null;
+    try { if (W.speechSynthesis) W.speechSynthesis.cancel(); } catch (e) {}
+    if (state.raf) { W.cancelAnimationFrame(state.raf); state.raf = null; }
+    state.timers.forEach(function (t) { W.clearTimeout(t); }); state.timers = [];
+    talking(false);
+  }
+  // Tapping the mic, or typing to Gia (a real tap or key press, never a focus change), stops her at once: she never talks over the guest
+  // or into the mic. Several selectors, so a Streamlit update to one name doesn't break it.
+  var GUEST_INPUT = '[data-testid="stAudioInput"], [data-testid*="AudioInput"], [class*="st-key-mic_"], ' +
+                    '[data-testid="stChatInput"], [data-testid*="ChatInput"], .stChatInput';
+  function interrupt(e) {
+    var t = e.target;
+    if (!state.stopped && t && t.closest && t.closest(GUEST_INPUT)) stop();
+  }
+  D.addEventListener("pointerdown", interrupt, true);
+  D.addEventListener("keydown", interrupt, true);
+
+  function speak(p) {
+    stop();
+    var lines = (p.lines || []).map(function (l) { return l.text; });
+    if (!lines.length) return;
+    state.stopped = false;
+    var synth = W.speechSynthesis || null;
+    var clips = (p.clips || []).map(function (c) { var a = new W.Audio(c.audio); a.preload = "auto"; return {a: a, from: c.from, to: c.to}; });
+    function done() { if (state.raf) { W.cancelAnimationFrame(state.raf); state.raf = null; } talking(false); state.stopped = true; }
+
+    // browser voice: one sentence at a time (long text in one go gets cut off in Chrome)
+    function pickVoice() {
+      var voices = (synth && synth.getVoices()) || [];
+      var lang = p.lang.toLowerCase(), base = lang.split("-")[0];
+      return voices.find(function (v) { return v.lang && v.lang.toLowerCase() === lang; })
+          || voices.find(function (v) { return v.lang && v.lang.toLowerCase().indexOf(base) === 0; }) || null;
+    }
+    function browserFrom(i) {
+      if (state.stopped) return;
+      if (i >= lines.length || !synth || !W.SpeechSynthesisUtterance) { done(); return; }
+      subtitle(lines[i]); talking(true);
+      var u = new W.SpeechSynthesisUtterance(lines[i]);
+      u.lang = p.lang; u.rate = p.rate;
+      try { var v = pickVoice(); if (v) u.voice = v; } catch (e) {}
+      u.onend = function () { later(function () { browserFrom(i + 1); }, 60); };
+      u.onerror = function () { later(function () { browserFrom(i + 1); }, 60); };
+      synth.speak(u);
+    }
+    function startBrowser(i) {
+      if (!synth || (synth.getVoices() || []).length) { later(function () { browserFrom(i); }, 60); return; }
+      var begun = false, go = function () { if (!begun) { begun = true; browserFrom(i); } };
+      try { synth.addEventListener("voiceschanged", go); } catch (e) {}
+      later(go, 700);
+    }
+    // Sarvam clips: subtitles follow the playback position, weighted by sentence length
+    function follow(c) {
+      var weights = [], total = 0;
+      for (var i = c.from; i < c.to; i++) { total += lines[i].length + 8; weights.push(total); }
+      (function tick() {
+        if (state.stopped || state.audio !== c.a) return;
+        var d = c.a.duration, t = c.a.currentTime;
+        if (d && isFinite(d) && d > 0) {
+          var at = (t / d) * total, k = 0;
+          while (k < weights.length - 1 && at > weights[k]) k++;
+          subtitle(lines[c.from + k]);
+        }
+        state.raf = W.requestAnimationFrame(tick);
+      })();
+    }
+    function playClip(k) {
+      if (state.stopped) return;
+      if (k >= clips.length) { done(); return; }
+      var c = clips[k];
+      state.audio = c.a;
+      subtitle(lines[c.from]);
+      c.a.onplaying = function () { if (!state.stopped) { talking(true); follow(c); } };
+      c.a.onended = function () { later(function () { playClip(k + 1); }, 120); };
+      c.a.onerror = function () { if (!state.stopped) startBrowser(c.from); };
+      var started = c.a.play();
+      if (started && started.catch) started.catch(function () { if (!state.stopped) startBrowser(c.from); });
+    }
+    if (clips.length) later(function () { playClip(0); }, 40); else startBrowser(0);
+  }
+  W.GiaVoice = {v: "%(version)s", speak: speak, stop: stop, state: state,
+                remove: function () { stop(); D.removeEventListener("pointerdown", interrupt, true);
+                                      D.removeEventListener("keydown", interrupt, true); }};
+}
+""" % {"version": CONTROLLER_VERSION}
+
+
 def speak_script(lines: list[str] | str | None, lang: str = "en-IN", rate: float = 1.0,
                  audio: list[bytes] | bytes | None = None,
                  clips: list[tuple[bytes, int, int]] | None = None) -> str:
     """HTML/JS for a zero-height Streamlit component that speaks Gia's reply (or, with None, stops).
 
     `lines` are the reply's sentences. `clips` are Sarvam audio clips, each covering sentences
-    [start, end) (usually one clip for the whole reply); `audio` is the older one-clip-per-line
-    form. While a clip plays, Gia's bubble shows the sentence being spoken (worked out from the
-    playback position) and her stage gets `gia-talking`. Without clips, or if the browser refuses
-    to play them, the browser's own voice reads the same sentences one by one. Tapping the mic or
-    typing in the chat box stops her. Everything runs in the *parent* page: browsers only allow
-    sound after the guest has interacted with the page, and a fresh component iframe hasn't been."""
+    [start, end) (usually one clip for the whole reply); `audio` is the one-clip-per-line form.
+    While a clip plays, Gia's bubble shows the sentence being spoken and her stage gets
+    `gia-talking`. Without clips, or if the browser refuses to play them, the browser's own voice
+    reads the same sentences one by one. Tapping the mic or typing to Gia stops her.
+
+    The work is done by a controller installed once in the main page (see _CONTROLLER_JS), so it
+    keeps running, and can still be stopped, after Streamlit removes this component's frame."""
     import base64
     if isinstance(lines, str):
         lines = [lines]
@@ -482,112 +637,24 @@ def speak_script(lines: list[str] | str | None, lang: str = "en-IN", rate: float
     payload = json.dumps({"lines": [{"text": t} for t in lines], "clips": clip_items, "lang": lang, "rate": rate,
                           "nonce": secrets.token_hex(4)})
     payload = payload.replace("<", "\\u003c").replace(">", "\\u003e")   # text can't close the <script>
+    controller = json.dumps(_CONTROLLER_JS).replace("<", "\\u003c").replace(">", "\\u003e")
     return """<script>
 (function () {
   var p = %s;
+  var SRC = %s, VERSION = "%s";
   var W = window;
   try { if (window.parent && window.parent.document) W = window.parent; } catch (e) {}
-  var D = W.document;
-  function talking(on) {   // Gia's stage bounces while she speaks (CSS in goodfoods/mascot.py)
-    try {
-      var stages = D.querySelectorAll(".gia-stage");
-      for (var i = 0; i < stages.length; i++) stages[i].classList.toggle("gia-talking", on);
+  if (!W.GiaVoice || W.GiaVoice.v !== VERSION) {
+    try { if (W.GiaVoice && W.GiaVoice.remove) W.GiaVoice.remove(); } catch (e) {}
+    try {   // install in the main page, so it outlives this frame
+      var s = W.document.createElement("script");
+      s.textContent = SRC + "\\ngiaInstall(window);";
+      W.document.head.appendChild(s);
     } catch (e) {}
+    if (!W.GiaVoice || W.GiaVoice.v !== VERSION) {   // the page refused the script: run it from here
+      (new Function("W", SRC + "\\ngiaInstall(W);"))(W);
+    }
   }
-  function subtitle(text) {  // the bubble shows the sentence being spoken
-    try {
-      var spans = D.querySelectorAll(".gia-stage .gia-line");
-      for (var i = 0; i < spans.length; i++) if (spans[i].textContent !== text) spans[i].textContent = text;
-    } catch (e) {}
-  }
-  // Tapping the mic or typing to Gia stops her, so she never talks over the guest (or into the mic).
-  if (!W.__giaStopBound) {
-    W.__giaStopBound = true;
-    var interrupt = function (e) {
-      var t = e.target;
-      if (t && t.closest && (t.closest('[data-testid="stAudioInput"]') || t.closest('[data-testid="stChatInput"]'))) {
-        if (W.__giaStop) W.__giaStop();
-      }
-    };
-    D.addEventListener("pointerdown", interrupt, true);
-    D.addEventListener("keydown", interrupt, true);
-  }
-  // Stop whatever Gia was saying before.
-  try { if (W.__giaStop) W.__giaStop(); } catch (e) {}
-  var synth = W.speechSynthesis || window.speechSynthesis || null;
-  try { if (synth) synth.cancel(); } catch (e) {}
-  talking(false);
-  var lines = (p.lines || []).map(function (l) { return l.text; });
-  if (!lines.length) return;
-
-  var stopped = false, current = null, raf = null;
-  var A = W.Audio || window.Audio;
-  var clips = (p.clips || []).map(function (c) { var a = new A(c.audio); a.preload = "auto"; return {a: a, from: c.from, to: c.to}; });
-  W.__giaStop = function () {
-    stopped = true;
-    try { if (current) current.pause(); } catch (e) {}
-    try { if (synth) synth.cancel(); } catch (e) {}
-    if (raf) { W.cancelAnimationFrame(raf); raf = null; }
-    talking(false);
-  };
-  function done() { if (raf) { W.cancelAnimationFrame(raf); raf = null; } talking(false); }
-
-  // ---- browser voice: one sentence at a time (long text in one go gets cut off in Chrome)
-  function pickVoice() {
-    var voices = (synth && synth.getVoices()) || [];
-    var lang = p.lang.toLowerCase(), base = lang.split("-")[0];
-    return voices.find(function (v) { return v.lang && v.lang.toLowerCase() === lang; })
-        || voices.find(function (v) { return v.lang && v.lang.toLowerCase().indexOf(base) === 0; })
-        || null;
-  }
-  function browserFrom(i) {
-    if (stopped) return;
-    if (i >= lines.length) { done(); return; }
-    var Utter = W.SpeechSynthesisUtterance || window.SpeechSynthesisUtterance;
-    if (!synth || !Utter) { done(); return; }
-    subtitle(lines[i]);
-    talking(true);
-    var u = new Utter(lines[i]);
-    u.lang = p.lang; u.rate = p.rate;
-    try { var v = pickVoice(); if (v) u.voice = v; } catch (e) {}   // no matching voice: browser default
-    u.onend = function () { setTimeout(function () { browserFrom(i + 1); }, 60); };
-    u.onerror = function () { setTimeout(function () { browserFrom(i + 1); }, 60); };
-    synth.speak(u);
-  }
-  function startBrowser(i) {
-    if (!synth || (synth.getVoices() || []).length) { setTimeout(function () { browserFrom(i); }, 60); return; }
-    var begun = false, go = function () { if (!begun) { begun = true; browserFrom(i); } };
-    try { synth.addEventListener("voiceschanged", go); } catch (e) {}
-    setTimeout(go, 700);
-  }
-
-  // ---- Sarvam clips: subtitles follow the playback position, weighted by sentence length
-  function follow(c) {
-    var weights = [], total = 0;
-    for (var i = c.from; i < c.to; i++) { total += lines[i].length + 8; weights.push(total); }
-    (function tick() {
-      if (stopped || current !== c.a) return;
-      var d = c.a.duration, t = c.a.currentTime;
-      if (d && isFinite(d) && d > 0) {
-        var at = (t / d) * total, k = 0;
-        while (k < weights.length - 1 && at > weights[k]) k++;
-        subtitle(lines[c.from + k]);
-      }
-      raf = W.requestAnimationFrame(tick);
-    })();
-  }
-  function playClip(k) {
-    if (stopped) return;
-    if (k >= clips.length) { done(); return; }
-    var c = clips[k];
-    current = c.a;
-    subtitle(lines[c.from]);
-    c.a.onplaying = function () { talking(true); follow(c); };
-    c.a.onended = function () { setTimeout(function () { playClip(k + 1); }, 120); };
-    c.a.onerror = function () { startBrowser(c.from); };
-    var started = c.a.play();
-    if (started && started.catch) started.catch(function () { if (!stopped) startBrowser(c.from); });
-  }
-  if (clips.length) setTimeout(function () { playClip(0); }, 40); else startBrowser(0);
+  W.GiaVoice.speak(p);
 })();
-</script>""" % payload
+</script>""" % (payload, controller, CONTROLLER_VERSION)

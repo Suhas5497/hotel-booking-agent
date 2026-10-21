@@ -27,9 +27,13 @@ RULES
    - "is X free at 8?" -> check_availability
    - book -> make_reservation; see/change/cancel an existing booking -> lookup_reservation / modify_reservation / cancel_reservation
 3. To book you need: restaurant_id, date, time, party_size, customer_name, phone. Ask for missing details, at most two per message. Never guess a name or phone.
-   For suggestions, don't ask for optional details (area, cuisine, budget) first: call recommend_restaurants with what you know, show options, then refine.
+   For suggestions (an occasion like "date night", or "suggest a place"), call recommend_restaurants straight away
+   with what you know, even without a day or time, show the options, then ask for the day and time. Don't ask for
+   optional details (area, cuisine, budget) first.
    "Cheaper" means: call the tool again with budget_per_person just below the cheapest price you already showed, keeping the same cuisine, area, date, time and party size. Never invent a budget the guest didn't give, and never call a pricier option cheaper.
-4. Pass dates as YYYY-MM-DD (today is {today_iso}). Pass times as 24h HH:MM when the guest made AM/PM clear ("8pm" -> 20:00, "breakfast at 9" -> 09:00); if they gave only a number like "9", pass it exactly as said - the system resolves it or tells you to ask.
+4. Never work out a weekday or date yourself: take it from CALENDAR below or from tool results ("day" fields).
+   "This weekend" means the Saturday and Sunday marked in CALENDAR.
+   Pass dates as YYYY-MM-DD (today is {today_iso}). Pass times as 24h HH:MM when the guest made AM/PM clear ("8pm" -> 20:00, "breakfast at 9" -> 09:00); if they gave only a number like "9", pass it exactly as said - the system resolves it or tells you to ask.
 5. Changing or cancelling needs the booking's full code (GF-XXXXXX) and the phone it was booked with. You can change the
    date, time, party size, name or special requests. If lookup_reservation shows hidden codes (GF-****XX), ask ONCE for the
    code from their confirmation message; if they don't have it, suggest calling the outlet. If no booking is found, say so
@@ -57,11 +61,31 @@ Tool returns picks -> You: "Happy anniversary! Three lovely options free at 8 PM
 KNOWN_ORDER = ("restaurant_id", "date", "time", "party_size", "customer_name", "phone", "confirmation_code")
 
 
+def calendar_block(now: datetime, days: int = 14) -> str:
+    """The next two weeks with weekdays, so the model never has to do date arithmetic
+    (it once offered "Saturday 23 Oct" when the 23rd was a Friday)."""
+    from datetime import timedelta
+    today = now.date()
+    rows = []
+    for i in range(days):
+        d = today + timedelta(days=i)
+        tag = " (today)" if i == 0 else " (tomorrow)" if i == 1 else ""
+        rows.append(f"{d:%a} {d.day} {d:%b} = {d.isoformat()}{tag}")
+    # the coming weekend: today if it's already Saturday/Sunday, else the next Saturday and Sunday
+    sat = today + timedelta(days=(5 - today.weekday()) % 7)
+    sun = sat + timedelta(days=1) if today.weekday() != 6 else today
+    if today.weekday() == 6:
+        sat = today - timedelta(days=1)
+    weekend = f"This weekend: {sat:%A} {sat.day} {sat:%B} ({sat.isoformat()}) and {sun:%A} {sun.day} {sun:%B} ({sun.isoformat()})."
+    return "CALENDAR (copy dates from here):\n" + "; ".join(rows) + "\n" + weekend + "\n"
+
+
 def render_system_prompt(now: datetime, n_outlets: int, city: str, guest_area: str | None = None,
                          known: dict | None = None) -> str:
     prompt = SYSTEM_PROMPT.format(
         n_outlets=n_outlets, city=city, today_long=now.strftime("%A, %d %B %Y"),
         today_iso=now.date().isoformat(), now_time=now.strftime("%H:%M"), areas=", ".join(catalog.AREAS))
+    prompt += "\n" + calendar_block(now)
     if guest_area:
         prompt += (f"\nGUEST LOCATION: the guest is near {guest_area}. When suggesting or searching, pass "
                    f"area=\"{guest_area}\" unless they ask for somewhere else.\n")

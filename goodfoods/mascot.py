@@ -247,6 +247,12 @@ STAGE_CSS = """
   .gia-rings { left: 60px; bottom: 58px; } .gia-confetti i { left: 58px; top: 58px; }
   .gia-bubble { font-size: 13.5px; margin-right: 10px; max-height: 120px; }
 }
+@media (max-height: 820px) and (min-width: 641px) {   /* short laptop screens: a smaller stage leaves room for the chat */
+  .gia-stage { --gia-k: .44; height: 124px; grid-template-columns: 112px minmax(0, 1fr); }
+  .gia-disc { width: 92px; height: 92px; left: 10px; bottom: 6px; } .gia-floor { left: 30px; width: 50px; bottom: 5px; }
+  .gia-pose { bottom: 5px; } .gia-rings { left: 56px; bottom: 52px; } .gia-confetti i { left: 54px; top: 50px; }
+  .gia-bubble { font-size: 13.5px; max-height: 96px; padding: 9px 12px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .gia-stage *, .gia-stage { animation: none !important; transition: none !important; }
   .gia-pose { opacity: 1; } .gia-pose.gia-first { display: none; } .gia-pose.gia-then { opacity: 1; }
