@@ -1,10 +1,27 @@
 # Changes from goodfoods-agent
 
+## New: voice
+
+- **Talk to Gia.** A Voice switch and a **Talk to Gia** button. Gia greets you aloud, listens through the
+  mic (Whisper, English and Hindi) and reads her replies aloud (the browser's own speech engine, no key).
+- **Help me choose.** A button under the options, plus a prompt rule: when you can't decide, Gia picks one
+  of the options she showed and says why it suits your occasion. For surprises and celebrations she
+  offers to add a special request (cake, flowers, a quiet table).
+- **Option cards stay selectable** while you ask about them. Before, any reply without new cards
+  (such as "which one is best?") turned the cards into a static picture, so you couldn't pick the one
+  Gia suggested.
+- After you choose a card, Gia tells you the next step: choose your day, guests and time, then
+  enter your details.
+- Tests: `tests/test_voice.py` (11 tests) and a voice journey in `tests/ui_walkthrough.py` that goes
+  greeting, speak your request, options read aloud, help me choose, pick a card.
+
+## Fixes
+
 This repository starts from [goodfoods-agent](https://github.com/Suhas5497/goodfoods-agent) at commit
 `e9d0f6f` and fixes the problems found in a code review. Every fix below has a regression test in
 `tests/test_fixes.py`; 14 of those tests fail on the original code.
 
-## Safety
+### Safety
 
 **The confirmation could approve a different phone number.**
 The approval key was a hash of the preview summary, which only shows the masked phone
@@ -28,7 +45,7 @@ cancel need. So anyone who knew a guest's number could cancel their booking.
 - The UI asks for the code on a masked booking card ("Unlock") before showing change and cancel.
   "Change this booking" on the confirmation ticket still works in one tap, since it has the code.
 
-## Correctness
+### Correctness
 
 **"Non-vegetarian" returned only pure-veg restaurants.**
 `"vegetarian" in "non-vegetarian"` is true, so the veg-only filter kicked in. Veg detection now
@@ -40,7 +57,7 @@ don't overlap each other and can use the same table, but both overlap a 7:30 req
 counted as two tables. Capacity now uses the peak number of tables in use at the same moment. It
 still never overbooks; it just stops turning guests away when a table is actually free.
 
-## Robustness
+### Robustness
 
 **Booking details got lost in longer chats.**
 History was cut at 16 messages, and tool calls count as messages, so a name or phone given early
@@ -64,9 +81,9 @@ message.
 - "8 baje" and "8 o'clock" are now understood as times (read against the outlet's hours, or asked
   about if both 8 AM and 8 PM are possible).
 
-## Tests
+### Tests
 
 - `tests/test_fixes.py`: 19 new tests, one or more per fix.
 - `tests/ui_walkthrough.py`: now also checks that a phone-only lookup hides change/cancel and that
   unlocking with the code brings them back.
-- Total: 74 offline tests (was 55), all passing.
+- Total: 85 offline tests (was 55), all passing.

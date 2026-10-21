@@ -18,10 +18,13 @@ from __future__ import annotations
 import html
 from datetime import date, datetime, timedelta
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
-from goodfoods import catalog, flow
+from goodfoods import catalog, flow, voice
 from goodfoods.agent import ReservationAgent
 from goodfoods.config import load_llm_settings, now
 from goodfoods.llm import LLMClient
@@ -174,6 +177,73 @@ def new_chat() -> None:
     st.session_state.messages = []
     for k in ("focus_override", "picked", "queued", "manage_mode", "modifying"):
         st.session_state.pop(k, None)
+    speak(greeting_text())
+
+
+# ----------------------------------------------------------------------------- voice
+def greeting_text() -> str:
+    hour = now().hour
+    greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
+    return (f"{greet}! I'm Gia from GoodFoods. What can I do for you today? "
+            "Pick an option below, or just tell me what you're looking for.")
+
+
+def voice_on() -> bool:
+    return bool(st.session_state.get("voice_on"))
+
+
+def speak(text: str | None) -> None:
+    """Have Gia say `text` aloud on the next redraw. Does nothing while voice is off."""
+    if voice_on() and text:
+        st.session_state.to_speak = text
+
+
+def on_voice_toggle() -> None:
+    """Turning voice on is a tap, which is what browsers need before a page may speak, so this
+    is where the greeting is said aloud. Turning it off stops any speech in progress."""
+    if voice_on():
+        speak(greeting_text() if not st.session_state.get("messages") else
+              "Voice is on. Tap the mic to talk, and I'll read my replies aloud.")
+    else:
+        st.session_state.pop("to_speak", None)
+        st.session_state.stop_speaking = True
+
+
+def start_voice() -> None:
+    st.session_state.voice_on = True
+    on_voice_toggle()
+
+
+def speech_output() -> None:
+    """Render a zero-height component that speaks (or stops speaking) in the guest's browser."""
+    text = st.session_state.pop("to_speak", None)
+    stop = st.session_state.pop("stop_speaking", False)
+    if text or stop:
+        components.html(voice.speak_script(voice.speakable(text) if text else None, voice.speech_lang(text or "")),
+                        height=0)
+
+
+def mic_input() -> str | None:
+    """The guest's spoken message as text, once per recording. Returns None if nothing new."""
+    n = st.session_state.get("mic_n", 0)
+    audio = st.audio_input("Speak to Gia", key=f"mic_{n}", label_visibility="collapsed",
+                           help="Tap, say what you need (English or Hindi), tap again to send.")
+    if audio is None:
+        return None
+    data = audio.getvalue()
+    digest = hashlib.sha1(data).hexdigest()
+    if st.session_state.get("mic_last") == digest:   # already handled this recording
+        return None
+    st.session_state.mic_last = digest
+    try:
+        with st.spinner("Listening…"):
+            text = voice.transcribe(data, voice.load_stt_settings(load_llm_settings()))
+    except voice.VoiceError as exc:
+        st.warning(str(exc))
+        speak(str(exc))
+        return None
+    st.session_state.mic_n = n + 1   # a fresh, empty recorder for the next message
+    return text
 
 
 esc = html.escape
@@ -288,7 +358,20 @@ def session_context(agent: ReservationAgent) -> dict:
                 ctx["lookup_phone"] = (e.detail.get("arguments") or {}).get("phone")
     elif _assistant_turns():
         ctx["last_trace"] = _assistant_turns()[-1].get("trace") or []
-    ctx["recs_latest"] = bool(msgs and msgs[-1]["role"] == "assistant" and _rows_from(msgs[-1].get("trace")))
+    # The option cards stay live while the guest is only *talking* about them ("which one is best for
+    # us?"): Gia answering without a tool call doesn't replace them. Any other tool call means she
+    # has moved on (checked a slot, booked, looked up), so the old cards become a static snapshot.
+    live_rec = None
+    for i, m in enumerate(msgs):
+        if m["role"] != "assistant":
+            continue
+        trace = m.get("trace") or []
+        if _rows_from(trace):
+            live_rec = i
+        elif any(e.kind == "tool" for e in trace):
+            live_rec = None
+    ctx["live_rec_idx"] = live_rec
+    ctx["recs_latest"] = live_rec is not None
     return ctx
 
 
@@ -338,6 +421,8 @@ def pick(r: dict) -> None:
     st.session_state.focus_override = r["restaurant_id"]
     st.session_state.pop("manage_mode", None)
     say_locally(f"Chose {concept} – {area}")
+    speak(f"Great choice, {concept} in {area}. Choose your day, guests and time below, "
+          "then enter your name and mobile number.")
 
 
 def rec_cards(trace: list, interactive: bool, msg_idx: int) -> None:
@@ -394,6 +479,9 @@ OCCASIONS = [
 
 
 def step_start() -> None:
+    if not voice_on():
+        st.button("Talk to Gia instead of typing", key="start_voice", icon=":material/mic:", type="primary",
+                  on_click=start_voice, use_container_width=True)
     cols = st.columns(3)
     for i, (title, sub, ask) in enumerate(OCCASIONS):
         cols[i % 3].button(f"**{title}** · {sub}", key=f"occ{i}", on_click=queue, args=(ask, title),
@@ -485,6 +573,8 @@ def step_details(service: ReservationService, ctx: dict) -> None:
         return
     with st.container(key="flow_box"):
         outlet_strip(r)
+        st.markdown('<div class="gf-sub">Choose your day, guests and time, then enter your details.</div>',
+                    unsafe_allow_html=True)
         day, party, hhmm, any_free = _pick_when(service, r["id"], f"bk_{r['id']}", ctx)
         c1, c2 = st.columns(2)
         name = c1.text_input("Name", value=st.session_state.get("guest_name", ""), key="f_name")
@@ -676,7 +766,8 @@ def action_area(agent: ReservationAgent, service: ReservationService, ctx: dict)
     if step == "start":
         step_start()
     elif step == "options":
-        chip_row([("Cheaper", "Show me cheaper options"), ("Top rated", "Show the top-rated options"),
+        chip_row([("Help me choose", "Which of these would you pick for me, and why?"),
+                  ("Cheaper", "Show me cheaper options"), ("Top rated", "Show the top-rated options"),
                   ("Another area", "Show options in a nearby area"), ("Different cuisine", "Show a different cuisine")],
                  "ref")
     elif step == "details":
@@ -783,6 +874,8 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
                        'English, Hindi or Hinglish</div>', unsafe_allow_html=True)
             if st.session_state.messages:
                 b.button("New chat", on_click=new_chat, use_container_width=True)
+            b.toggle("Voice", key="voice_on", on_change=on_voice_toggle,
+                     help="Gia greets you, listens through the mic and reads her replies aloud.")
             near, _ = st.columns([1.3, 2])
             area = near.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area",
                                   help="Gia will suggest outlets in and around this area.")
@@ -791,9 +884,8 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
 
             if not st.session_state.messages:
                 with st.chat_message("assistant", avatar=AVATARS["assistant"]):
-                    st.markdown("Hi, I'm **Gia**. What's the occasion? Pick one to start, or just type.")
+                    st.markdown(greeting_text())
             msgs = st.session_state.messages
-            last_idx = len(msgs) - 1
             for idx, m in enumerate(msgs):
                 with st.chat_message(m["role"], avatar=AVATARS[m["role"]]):
                     st.markdown(m["content"])
@@ -802,15 +894,21 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
                             if e.kind == "llm" and e.name == "error":
                                 st.caption(f"Technical detail: {e.detail.get('message')} — run "
                                            "`python -m goodfoods.diagnose` to test the connection.")
-                        live = idx == last_idx or (idx == last_idx - 1 and msgs[-1].get("local"))
-                        rec_cards(m["trace"], interactive=live, msg_idx=idx)
+                        rec_cards(m["trace"], interactive=idx == ctx["live_rec_idx"], msg_idx=idx)
                         if show_trace:
                             raw_trace(m["trace"])
             pending_area = st.container()
 
             action_area(agent, service, ctx)
+            heard = mic_input() if voice_on() else None
             typed = st.chat_input("Or just type to Gia…")
-            q = {"text": typed, "shown": typed} if typed else st.session_state.pop("queued", None)
+            speech_output()
+            if typed:
+                q = {"text": typed, "shown": typed}
+            elif heard:
+                q = {"text": heard, "shown": f"🎤 {heard}"}
+            else:
+                q = st.session_state.pop("queued", None)
 
     if q:
         with pending_area:
@@ -825,6 +923,7 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
                 waiting.empty()
         st.session_state.messages += [{"role": "user", "content": q["shown"]},
                                       {"role": "assistant", "content": turn.reply, "trace": turn.trace}]
+        speak(turn.reply)
         u = st.session_state.usage
         u["prompt_tokens"] += turn.usage.get("prompt_tokens", 0)
         u["completion_tokens"] += turn.usage.get("completion_tokens", 0)

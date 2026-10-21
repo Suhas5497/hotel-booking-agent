@@ -121,8 +121,16 @@ class FakeSt(types.ModuleType):
         t, self.typed = self.typed, None
         return t
 
-    def toggle(self, *a, value=False, **k):
-        return value
+    def toggle(self, label, value=False, key=None, **k):
+        self.log.append(("toggle", (label,), {"key": key}))
+        return self.session_state.get(key, value) if key else value
+
+    def audio_input(self, label, key=None, **k):
+        self.log.append(("audio_input", (label,), {"key": key}))
+        return self.session_state.get(key)
+
+    def warning(self, msg, *a, **k):
+        self.log.append(("WARNING", (msg,), {}))
 
     def rerun(self):
         raise Rerun()
@@ -133,6 +141,22 @@ class FakeSt(types.ModuleType):
 
 st = FakeSt()
 sys.modules["streamlit"] = st
+# streamlit.components.v1.html is how the app speaks: record what it would say.
+SPOKEN = []
+_components = types.ModuleType("streamlit.components")
+_v1 = types.ModuleType("streamlit.components.v1")
+_v1.html = lambda body, **k: SPOKEN.append(json.loads(body.split("var p = ", 1)[1].split(";\n", 1)[0]))
+_components.v1 = _v1
+st.components = _components
+sys.modules["streamlit.components"], sys.modules["streamlit.components.v1"] = _components, _v1
+
+
+class FakeAudio:
+    def __init__(self, data):
+        self.data = data
+
+    def getvalue(self):
+        return self.data
 
 from test_agent import FakeLLM, call, say  # noqa: E402
 from goodfoods.agent import ReservationAgent  # noqa: E402
@@ -236,3 +260,54 @@ run("manage form shown again", press=None)
 run("new chat", press="New chat")
 run("bad phone validation", state={"picked": "BLR-001", "f_phone": "123", f"bk_BLR-001_time_2026-10-12_2": "19:00"},
     press="f_review")
+
+
+# 9 voice journey: greeting -> say what you want -> options read aloud -> "help me choose" -> pick -> next step
+from goodfoods import voice  # noqa: E402
+
+for k in ("picked", "focus_override", "f_phone"):   # leave the bad-phone form from step 8
+    st.session_state.pop(k, None)
+run("voice: start screen", press=None)
+assert any(l[2].get("key") == "start_voice" for l in st.log if l[0] == "button"), "no 'Talk to Gia' button"
+SPOKEN.clear()
+run("voice: tap 'Talk to Gia'", press="start_voice")
+assert SPOKEN and "What can I do for you today?" in SPOKEN[-1]["text"], SPOKEN
+assert any(l[0] == "audio_input" for l in st.log), "mic not shown with voice on"
+print("   spoken:", SPOKEN[-1]["text"][:90])
+
+said = "Tomorrow is my anniversary, I need a table for 2 to surprise my wife"
+voice.transcribe = lambda data, settings=None, **k: said
+run("voice: guest speaks", state={"mic_0": FakeAudio(b"RIFF....fake wav")},
+    script=[call("recommend_restaurants", {"occasion": "anniversary", "party_size": 2, "date": "tomorrow"}),
+            say("Happy anniversary! Three lovely options for tomorrow:\n1. Sakura, HSR Layout · ₹1,580 · 4.9★\n"
+                "Which one would you like?")])
+assert agent.history[-4]["content"] == said or any(m.get("content") == said for m in agent.history), "transcript not sent"
+assert st.session_state.messages[-2]["content"] == "🎤 " + said
+assert "1,580 rupees" in SPOKEN[-1]["text"] and "4.9 stars" in SPOKEN[-1]["text"], SPOKEN[-1]
+print("   spoken:", SPOKEN[-1]["text"][:90])
+
+run("voice: same recording is not sent twice", state={"mic_0": FakeAudio(b"RIFF....fake wav")})
+assert st.session_state.messages[-2]["content"] == "🎤 " + said
+
+run("voice: help me choose", press="Help me choose",
+    script=[say("For a quiet anniversary surprise I'd pick Sakura in HSR Layout: it's top rated and has a quiet zone.")])
+assert "Sakura" in SPOKEN[-1]["text"]
+print("   spoken:", SPOKEN[-1]["text"][:90])
+
+pick_key = next(l[2]["key"] for l in reversed(st.log) if l[0] == "button" and str(l[2].get("key", "")).startswith("pick_"))
+run("voice: choose a card", press=pick_key)
+assert "Choose your day, guests and time" in SPOKEN[-1]["text"], SPOKEN[-1]
+print("   spoken:", SPOKEN[-1]["text"][:90])
+
+
+def mic_fails(*a, **k):
+    raise voice.VoiceError("I didn't catch that. Tap the mic and speak a little closer.")
+
+
+voice.transcribe = mic_fails
+run("voice: mic error is shown and spoken", state={f"mic_{st.session_state.mic_n}": FakeAudio(b"noise")})
+assert any(l[0] == "WARNING" for l in st.log) and "didn't catch" in SPOKEN[-1]["text"]
+
+run("voice: turn off hides the mic", state={"voice_on": False}, press=None)
+assert not any(l[0] == "audio_input" for l in st.log), "mic shown with voice off"
+print("\nvoice journey OK")

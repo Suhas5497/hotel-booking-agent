@@ -65,19 +65,36 @@ The brief asks for Llama 3.x 8B or a similar small model. Groq retired `llama-3.
 ### Tests and evaluation
 
 ```bash
-python -m unittest discover -s tests -t .    # 74 offline tests, no API key needed
+python -m unittest discover -s tests -t .    # 85 offline tests, no API key needed
 python tests/ui_walkthrough.py               # clicks through every screen with a scripted model
 python -m evals.run_evals                    # live run against the real model, writes evals/report.json
 ```
 
 The offline tests include scripted "bad" model behaviour: booking without consent, inventing a confirmation code, broken JSON, getting stuck in a loop. That way I can show the safety checks hold no matter what the model does. The live evaluation runs 12 single-message scenarios and 6 complete conversations, then checks the database to see whether the right booking really exists.
 
+## Voice
+
+Turn on **Voice** (top of the chat) or tap **Talk to Gia** on the start screen. Gia then:
+
+- **greets you out loud** and asks what she can do for you today,
+- **listens** through the mic: tap, say something like *"Tomorrow is my anniversary, I need a table for two to surprise my wife"*, tap again, and it's sent as your message (English, Hindi or a mix),
+- **reads her replies aloud** at every step: the options, her pick if you ask her to choose, "choose your time below and enter your details", the summary to confirm, and the booking code (spelled out letter by letter).
+
+How it works:
+
+- **Listening** uses Whisper (`whisper-large-v3-turbo`) through the same provider and key as the chat model, so a Groq key covers both. To use another speech-to-text service, set `STT_BASE_URL`, `STT_API_KEY` and `STT_MODEL` in `.env`. With a local Ollama chat model you'll need one of these, since Ollama has no speech-to-text endpoint.
+- **Speaking** happens in your browser (the Web Speech API), so it's free and needs no key. It picks an Indian English voice, or a Hindi voice for Hindi text, if your system has one.
+- Browsers only let a page talk after you've tapped something, which is why Gia greets you aloud when you switch voice on rather than the instant the page opens.
+- The mic needs permission and works on `localhost` or over HTTPS.
+
+Voice is a layer on top of the chat: what you say goes to Gia as an ordinary message, so all the booking rules and the explicit "yes" before saving still apply.
+
 ## The booking flow
 
 I didn't want guests typing their name and phone into a chat window, or guessing which times might be free. So the chat shows different controls at each step:
 
-1. **Start.** Pick an occasion (date night, family, birthday, business lunch, quick bite, surprise me) or just type. An "I'm near" picker sets your area.
-2. **Options.** Three outlet cards with a picture, price, rating, distance from you and a reason, each with a **Choose** button. Below them: cheaper, top rated, another area, different cuisine.
+1. **Start.** Gia greets you and asks what she can do for you. Pick an occasion (date night, family, birthday, business lunch, quick bite, surprise me), type, or tap **Talk to Gia** and say it. An "I'm near" picker sets your area.
+2. **Options.** Three outlet cards with a picture, price, rating, distance from you and a reason, each with a **Choose** button. Below them: **Help me choose** (Gia picks one and says why), cheaper, top rated, another area, different cuisine. The cards stay selectable while you ask about them.
 3. **Details.** Day, number of guests and time are buttons. Only the times that are actually free at that outlet are shown. Name, mobile and an optional request go in small fields.
 4. **Review.** A summary card with **Confirm booking** or **Edit details**. Nothing is saved before this point.
 5. **Booked.** A ticket with the confirmation code, an **Add to calendar** file and **Directions**.
@@ -209,6 +226,7 @@ The full use-case document is in [`docs/USE_CASE.md`](docs/USE_CASE.md). Here's 
 - Tables can't be joined, so a party of 8 needs an 8-seat table.
 - No OTP check yet, so a guest who has lost their code has to call the outlet. No payments or deposits.
 - SQLite, so it runs on a single machine.
+- Spoken replies use whatever voices the browser and operating system provide, so they sound different on Chrome, Edge, Safari and phones. Kannada voices are rare.
 - On Groq's free tier, heavy use hits the per-minute and daily token limits. The app waits and retries, but replies slow down.
 - The model's wording varies between runs, and the live evaluation numbers depend on the model and provider you use.
 
@@ -238,6 +256,7 @@ goodfoods/
   catalog.py            areas, cuisines, features, occasions
   seed.py, db.py        demo data and database
   ui_art.py             illustrations for each restaurant style
+  voice.py              speech-to-text (Whisper) and text prepared for the browser to speak
   diagnose.py           connection check
   demo_prep.py          finds full slots for demos
 tests/                  offline tests and the UI walkthrough
