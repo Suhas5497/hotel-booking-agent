@@ -24,9 +24,9 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from goodfoods import catalog, flow, voice
+from goodfoods import catalog, flow, mascot, voice
 from goodfoods.agent import ReservationAgent
-from goodfoods.config import load_llm_settings, now
+from goodfoods.config import ROOT, load_llm_settings, now
 from goodfoods.llm import LLMClient
 from goodfoods.mcp_client import InProcessTransport, MCPClient
 from goodfoods.mcp_server import MCPServer
@@ -38,7 +38,8 @@ from goodfoods.ui_art import cover_svg
 ANYWHERE = "Anywhere in Bengaluru"
 
 PAGES = ["Reserve with Gia", "Explore outlets", "Bookings & metrics"]
-AVATARS = {"assistant": ":material/room_service:", "user": ":material/person:"}
+GIA_HEAD = ROOT / "static" / "gia" / "head.png"
+AVATARS = {"assistant": str(GIA_HEAD) if GIA_HEAD.exists() else ":material/room_service:", "user": ":material/person:"}
 
 st.set_page_config(page_title="GoodFoods · Reserve with Gia", page_icon=":material/restaurant:",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -139,6 +140,7 @@ header[data-testid="stHeader"] { background:transparent; }
 .st-key-ctx_col { position:sticky; top:1rem; }
 [data-testid="stColumn"]:has(.st-key-ctx_col) { align-self:stretch; }
 [data-testid="stMetric"] { background:#FFFFFF; border-radius:16px; padding:18px 20px; box-shadow:0 1px 2px rgba(23,32,28,.04), 0 6px 18px rgba(23,32,28,.05); }
+""" + mascot.STAGE_CSS + """
 </style>
 """, unsafe_allow_html=True)
 
@@ -223,6 +225,24 @@ def speech_output() -> None:
                         height=0)
 
 
+GIA_SLOT: dict = {"slot": None}   # the stage placeholder for this run, so waits can update it
+
+
+def show_gia(moment: str, line: str | None = None) -> None:
+    """Draw Gia's stage for `moment` (see goodfoods/mascot.py) in this run's placeholder."""
+    slot = GIA_SLOT["slot"]
+    if slot is not None:
+        slot.markdown(mascot.stage_html(moment, line=line), unsafe_allow_html=True)
+
+
+def gia_moment(agent: ReservationAgent, ctx: dict) -> str:
+    msgs = st.session_state.messages
+    reply = msgs[-1]["content"] if msgs and msgs[-1]["role"] == "assistant" else ""
+    done = ctx.get("done") or {}
+    return mascot.choose_moment(current_step(agent, ctx), ctx.get("last_trace"),
+                                agent.pending.tool if agent.pending else None, done.get("status"), reply)
+
+
 def mic_input() -> str | None:
     """The guest's spoken message as text, once per recording. Returns None if nothing new."""
     n = st.session_state.get("mic_n", 0)
@@ -235,10 +255,12 @@ def mic_input() -> str | None:
     if st.session_state.get("mic_last") == digest:   # already handled this recording
         return None
     st.session_state.mic_last = digest
+    show_gia("listening")
     try:
         with st.spinner("Listening…"):
             text = voice.transcribe(data, voice.load_stt_settings(load_llm_settings()))
     except voice.VoiceError as exc:
+        show_gia("thinking", str(exc))
         st.warning(str(exc))
         speak(str(exc))
         return None
@@ -876,6 +898,8 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
                 b.button("New chat", on_click=new_chat, use_container_width=True)
             b.toggle("Voice", key="voice_on", on_change=on_voice_toggle,
                      help="Gia greets you, listens through the mic and reads her replies aloud.")
+            GIA_SLOT["slot"] = st.empty()
+            show_gia(gia_moment(agent, ctx))
             near, _ = st.columns([1.3, 2])
             area = near.selectbox("I'm near", [ANYWHERE] + catalog.AREAS, key="guest_area",
                                   help="Gia will suggest outlets in and around this area.")
@@ -918,6 +942,7 @@ def page_chat(agent: ReservationAgent, service: ReservationService, show_trace: 
                 waiting = st.empty()
                 agent.llm.on_wait = lambda secs: waiting.info(
                     f"Lots of requests right now — waiting {secs:.0f}s for the model, then continuing…")
+                show_gia("searching", "Let me check…")
                 with st.spinner("Checking tables…"):
                     turn = agent.chat(q["text"])
                 waiting.empty()

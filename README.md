@@ -65,12 +65,31 @@ The brief asks for Llama 3.x 8B or a similar small model. Groq retired `llama-3.
 ### Tests and evaluation
 
 ```bash
-python -m unittest discover -s tests -t .    # 85 offline tests, no API key needed
+python -m unittest discover -s tests -t .    # 93 offline tests, no API key needed
 python tests/ui_walkthrough.py               # clicks through every screen with a scripted model
 python -m evals.run_evals                    # live run against the real model, writes evals/report.json
 ```
 
 The offline tests include scripted "bad" model behaviour: booking without consent, inventing a confirmation code, broken JSON, getting stuck in a loop. That way I can show the safety checks hold no matter what the model does. The live evaluation runs 12 single-message scenarios and 6 complete conversations, then checks the database to see whether the right booking really exists.
+
+## Meet Gia
+
+Gia is drawn as a friendly hotel-host character who reacts to every step of a booking. She sits above the chat on a lit spotlight with a speech bubble, and her small face appears next to her messages.
+
+| Moment | What Gia does |
+|---|---|
+| App opens, New chat | Waves in and says hello |
+| Waiting for the model | Sways with a magnifying glass |
+| Options appear | Hops, holding a map |
+| "Help me choose" | A lightbulb flashes and she nods |
+| A detail is missing or a slot is full | Tilts her head, thinking |
+| Confirm screen | Thumbs up with sparkles |
+| Booked | Jumps with confetti, then relaxes in sunglasses |
+| Speaking (voice on) | Bounces in rhythm while the voice plays |
+
+Between moments she breathes, floats and gives a small bounce every few seconds. Everything is CSS, and it stays still for people who turn on "reduce motion".
+
+The pose images are in `static/gia/`. To use new art, replace those files and keep the same names. The logic is in `goodfoods/mascot.py`, and `docs/gia-mascot-demo.html` is a standalone preview of every reaction.
 
 ## Voice
 
@@ -257,6 +276,8 @@ goodfoods/
   seed.py, db.py        demo data and database
   ui_art.py             illustrations for each restaurant style
   voice.py              speech-to-text (Whisper) and text prepared for the browser to speak
+  mascot.py             Gia's moments and animated stage
+static/gia/             Gia's pose images (served by Streamlit)
   diagnose.py           connection check
   demo_prep.py          finds full slots for demos
 tests/                  offline tests and the UI walkthrough

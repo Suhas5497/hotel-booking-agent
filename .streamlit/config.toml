@@ -7,3 +7,7 @@ textColor = "#17201C"
 
 [client]
 toolbarMode = "minimal"
+
+[server]
+# Serves files in ./static at app/static/... (Gia's pose images are loaded from there).
+enableStaticServing = true

@@ -1,5 +1,16 @@
 # Changes from goodfoods-agent
 
+## New: Gia, the character
+
+- Gia appears above the chat on a lit stage with a speech bubble, and her face is the avatar on her messages.
+- She changes pose and motion with each step: greeting, searching while the model works, options,
+  help me choose, thinking, confirm, booked (confetti, then a relaxed pose), updated, cancelled,
+  finding a booking, and sorry when something fails. While the mic transcribes she listens.
+- While a reply is read aloud she bounces in rhythm (the speech script toggles her talking state).
+- All motion is CSS; it respects "reduce motion".
+- Poses are cut from the character sheet for now; replace the files in `static/gia/` to upgrade the art.
+- Tests: `tests/test_mascot.py` (8 tests) and Gia's moment is checked at every step of the UI walkthrough.
+
 ## New: voice
 
 - **Talk to Gia.** A Voice switch and a **Talk to Gia** button. Gia greets you aloud, listens through the
@@ -86,4 +97,4 @@ message.
 - `tests/test_fixes.py`: 19 new tests, one or more per fix.
 - `tests/ui_walkthrough.py`: now also checks that a phone-only lookup hides change/cancel and that
   unlocking with the code brings them back.
-- Total: 85 offline tests (was 55), all passing.
+- Total: 93 offline tests (was 55), all passing.

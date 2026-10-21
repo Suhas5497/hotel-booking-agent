@@ -174,7 +174,15 @@ def speak_script(text: str | None, lang: str = "en-IN", rate: float = 1.0) -> st
   try { synth = window.parent.speechSynthesis; } catch (e) {}
   synth = synth || window.speechSynthesis;
   if (!synth || typeof SpeechSynthesisUtterance === "undefined") return;
+  // Gia's stage bounces while she speaks (class read by goodfoods/mascot.py's CSS).
+  function talking(on) {
+    try {
+      var stages = window.parent.document.querySelectorAll(".gia-stage");
+      for (var i = 0; i < stages.length; i++) stages[i].classList.toggle("gia-talking", on);
+    } catch (e) {}
+  }
   synth.cancel();
+  talking(false);
   if (!p.text) return;
   var Utter = (function () { try { return window.parent.SpeechSynthesisUtterance; } catch (e) { return null; } })()
               || SpeechSynthesisUtterance;
@@ -189,6 +197,9 @@ def speak_script(text: str | None, lang: str = "en-IN", rate: float = 1.0) -> st
     var u = new Utter(p.text);
     u.lang = p.lang; u.rate = p.rate;
     try { var v = pickVoice(); if (v) u.voice = v; } catch (e) {}   // no matching voice: browser default
+    u.onstart = function () { talking(true); };
+    u.onend = function () { talking(false); };
+    u.onerror = function () { talking(false); };
     synth.speak(u);
   }
   if ((synth.getVoices() || []).length) { setTimeout(go, 60); }

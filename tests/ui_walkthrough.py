@@ -81,7 +81,15 @@ class FakeSt(types.ModuleType):
         return False
 
     def empty(self):
-        return MagicMock()
+        st_ref = self
+
+        class Slot:   # st.empty(): records what's drawn into it (Gia's stage is drawn this way)
+            def markdown(self, body, *a, **k):
+                st_ref.log.append(("markdown", (str(body)[:120],), {}))
+
+            def __getattr__(self, name):
+                return lambda *a, **k: None
+        return Slot()
 
     def markdown(self, body, *a, **k):
         self.log.append(("markdown", (str(body)[:120],), {}))
@@ -173,6 +181,18 @@ st.session_state.update(agent=agent, messages=[], usage={"prompt_tokens": 0, "co
                                                          "turns": 0, "llm_ms": 0.0})
 
 
+def gia_moments():
+    """Gia's moments drawn during the last run, in order."""
+    import re
+    return [re.search(r'data-moment="([a-z]+)"', l[1][0]).group(1) for l in st.log
+            if l[0] == "markdown" and 'class="gia-stage"' in l[1][0]]
+
+
+def gia_is(expected):
+    got = gia_moments()
+    assert got and got[-1] == expected, f"Gia should be '{expected}', saw {got}"
+
+
 def run(label, press=None, typed=None, script=None, state=None):
     if script:
         llm.script.extend(script)
@@ -204,19 +224,24 @@ def run(label, press=None, typed=None, script=None, state=None):
         print("   other:", extra)
     if errors:
         print("   ERRORS:", errors)
+    print("   gia:", gia_moments()[-1:] )
     print("   last msgs:", [(m["role"], m["content"][:70]) for m in st.session_state.messages[-2:]])
     print("   pending:", agent.pending.tool if agent.pending else None)
 
 
 # 1 start
 run("start")
+gia_is("greeting")
 # 2 occasion -> model recommends
 run("occasion -> options", press="**Date night** · romantic, rooftop or quiet",
     script=[call("recommend_restaurants", {"occasion": "date", "party_size": 2, "date": "2026-10-17", "time": "20:00"}),
             say("Three lovely options free at 8 PM Saturday.")])
+assert "searching" in gia_moments(), "Gia should search while the model works"
+gia_is("options")
 # 3 choose first card
 first_key = next(k for k in ("pick_1_0",))
 run("choose card -> details form", press=first_key)
+gia_is("picked")
 # 4 fill name/phone and review (needs a time picked: set via pills state)
 rid = st.session_state.picked
 st.session_state[f"bk_{rid}_day"] = "2026-10-17"
@@ -228,8 +253,10 @@ args = {"restaurant_id": rid, "date": "2026-10-17", "time": "20:00", "party_size
         "customer_name": "Asha Rao", "phone": "9876543210"}
 run("review booking -> preview", press="f_review",
     script=[call("make_reservation", args), say("Here's your booking — shall I confirm?")])
+gia_is("confirm")
 # 5 confirm
 run("confirm -> ticket", press="rv_yes", script=[call("make_reservation", args), say("You're booked!")])
+gia_is("booked")
 code = next(iter(agent.known_codes), None)
 print("   booked code:", code, "rows:", service.db.query("SELECT COUNT(*) n FROM reservations")[0]["n"])
 # 6 change from ticket -> lookup -> list
@@ -291,6 +318,7 @@ assert st.session_state.messages[-2]["content"] == "🎤 " + said
 
 run("voice: help me choose", press="Help me choose",
     script=[say("For a quiet anniversary surprise I'd pick Sakura in HSR Layout: it's top rated and has a quiet zone.")])
+gia_is("suggestions")
 assert "Sakura" in SPOKEN[-1]["text"]
 print("   spoken:", SPOKEN[-1]["text"][:90])
 
@@ -305,8 +333,10 @@ def mic_fails(*a, **k):
 
 
 voice.transcribe = mic_fails
+assert "listening" not in gia_moments()
 run("voice: mic error is shown and spoken", state={f"mic_{st.session_state.mic_n}": FakeAudio(b"noise")})
 assert any(l[0] == "WARNING" for l in st.log) and "didn't catch" in SPOKEN[-1]["text"]
+gia_is("thinking")
 
 run("voice: turn off hides the mic", state={"voice_on": False}, press=None)
 assert not any(l[0] == "audio_input" for l in st.log), "mic shown with voice off"
