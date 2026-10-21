@@ -85,6 +85,24 @@ def main() -> int:
     if errors:
         return _fail("agent turn", errors[-1], "send this message to whoever is helping you debug")
     print(f"   Gia: {turn.reply[:300]}")
+    if not tools:
+        print("   [WARN] the model answered without calling a tool. Gia needs tool calling to check tables and\n"
+              "          book; try another LLM_MODEL if this keeps happening.")
+
+    print("\n5. Gia's voice (Sarvam Bulbul)")
+    from . import voice
+    tts = voice.load_tts_settings()
+    if not tts.api_key:
+        print("   SARVAM_API_KEY not set: Gia will use the browser's voice (free, varies by device).")
+    else:
+        try:
+            started = time.perf_counter()
+            audio = voice.synthesize("Hi! I'm Gia. What can I do for you today?", "en-IN", tts)
+            print(f"   voice '{tts.speaker}' ({tts.model}) OK: {len(audio) // 1024} KB of audio in "
+                  f"{time.perf_counter() - started:.1f}s")
+        except voice.VoiceError as exc:
+            return _fail("Sarvam voice", str(exc), "check SARVAM_API_KEY and SARVAM_SPEAKER in .env, or remove the key "
+                         "to use the browser voice")
     print("\n[OK] Everything works. Start the app with:  python -m streamlit run app.py")
     return 0
 

@@ -1,5 +1,15 @@
 # Changes from goodfoods-agent
 
+## New: Gia's voice (Sarvam Bulbul)
+
+- Gia speaks with Sarvam Bulbul v3, male voice `shubh`, pace 1.1 and expressiveness 0.75 for a cheerful
+  sound. All four are settings in `.env` (`SARVAM_SPEAKER`, `SARVAM_TTS_MODEL`, `SARVAM_PACE`, `SARVAM_TEMPERATURE`).
+- English, Hindi, Hinglish and Kannada lines go to Sarvam with the matching language code.
+- The clip plays in the page and Gia bounces only while it plays. Repeated lines are cached.
+- Falls back to the browser's free voice if there's no key, Sarvam fails, or the browser blocks playback.
+- `python -m goodfoods.diagnose` now checks the voice, and warns when the model answers without calling a tool.
+- Tests: 6 new voice tests and two walkthrough steps (Sarvam clip, then fallback when Sarvam fails).
+
 ## New: Gia, the character
 
 - Gia appears above the chat on a lit stage with a speech bubble, and her face is the avatar on her messages.
@@ -97,4 +107,4 @@ message.
 - `tests/test_fixes.py`: 19 new tests, one or more per fix.
 - `tests/ui_walkthrough.py`: now also checks that a phone-only lookup hides change/cancel and that
   unlocking with the code brings them back.
-- Total: 93 offline tests (was 55), all passing.
+- Total: 99 offline tests (was 55), all passing.

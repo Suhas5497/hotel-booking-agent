@@ -116,3 +116,73 @@ class Speakable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SarvamVoice(unittest.TestCase):
+    TTS = voice.TTSSettings(api_key="sk-sarvam", base_url="https://sarvam.test")
+
+    def setUp(self):
+        voice._TTS_CACHE.clear()
+
+    def _ok(self, audio=b"ID3fake-mp3"):
+        import base64
+        return FakeResponse(json.dumps({"request_id": "r1", "audios": [base64.b64encode(audio).decode()]}).encode())
+
+    def test_request_and_audio(self):
+        seen = {}
+
+        def fake(req, timeout=None):
+            seen["url"], seen["headers"], seen["body"] = req.full_url, dict(req.header_items()), json.loads(req.data)
+            return self._ok()
+
+        with mock.patch.object(voice.urllib.request, "urlopen", fake):
+            audio = voice.synthesize("Hi! I'm Gia.", "en-IN", self.TTS)
+        self.assertEqual(audio, b"ID3fake-mp3")
+        self.assertEqual(seen["url"], "https://sarvam.test/text-to-speech")
+        self.assertEqual(seen["headers"]["Api-subscription-key"], "sk-sarvam")
+        b = seen["body"]
+        self.assertEqual((b["text"], b["language_code"], b["model"], b["speaker"]), ("Hi! I'm Gia.", "en-IN", "bulbul:v3", "shubh"))
+        self.assertEqual((b["pace"], b["temperature"], b["output_audio_codec"]), (1.1, 0.75, "mp3"))
+        self.assertNotIn("pitch", b, "pitch is v2-only; v3 rejects it")
+
+    def test_repeated_lines_are_cached(self):
+        with mock.patch.object(voice.urllib.request, "urlopen", return_value=self._ok()) as call:
+            voice.synthesize("Let me check…", "en-IN", self.TTS)
+            voice.synthesize("Let me check…", "en-IN", self.TTS)
+        self.assertEqual(call.call_count, 1)
+
+    def test_hindi_and_unknown_languages(self):
+        bodies = []
+
+        def fake(req, timeout=None):
+            bodies.append(json.loads(req.data)); return self._ok()
+
+        with mock.patch.object(voice.urllib.request, "urlopen", fake):
+            voice.synthesize("कल रात 8 बजे", "hi-IN", self.TTS)
+            voice.synthesize("Bonjour", "fr-FR", self.TTS)
+        self.assertEqual([b["language_code"] for b in bodies], ["hi-IN", "en-IN"])
+
+    def test_errors_fall_back(self):
+        with self.assertRaises(VoiceError):
+            voice.synthesize("hi", "en-IN", voice.TTSSettings(api_key=""))
+        for code, words in ((403, "SARVAM_API_KEY"), (429, "browser voice"), (422, "SARVAM_SPEAKER"), (500, "HTTP 500")):
+            with mock.patch.object(voice.urllib.request, "urlopen", side_effect=http_error(code)):
+                with self.assertRaises(VoiceError) as ctx:
+                    voice.synthesize(f"line {code}", "en-IN", self.TTS)
+            self.assertIn(words, str(ctx.exception))
+        with mock.patch.object(voice.urllib.request, "urlopen", return_value=FakeResponse(b'{"audios": []}')):
+            with self.assertRaises(VoiceError):
+                voice.synthesize("empty", "en-IN", self.TTS)
+
+    def test_settings_from_env(self):
+        env = {"SARVAM_API_KEY": " k ", "SARVAM_SPEAKER": "Aditya", "SARVAM_PACE": "9", "SARVAM_TEMPERATURE": "oops"}
+        with mock.patch.dict("os.environ", env):
+            s = voice.load_tts_settings()
+        self.assertEqual((s.api_key, s.speaker, s.pace, s.temperature), ("k", "aditya", 2.0, 0.75))
+
+    def test_script_carries_audio(self):
+        js = voice.speak_script("Hi", "en-IN", audio=b"ID3abc")
+        payload = json.loads(js.split("var p = ", 1)[1].split(";\n", 1)[0])
+        self.assertTrue(payload["audio"].startswith("data:audio/mpeg;base64,"))
+        self.assertEqual(voice.audio_mime(b"RIFF....WAVE"), "audio/wav")
+        self.assertEqual(json.loads(voice.speak_script("Hi").split("var p = ", 1)[1].split(";\n", 1)[0])["audio"], "")

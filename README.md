@@ -65,7 +65,7 @@ The brief asks for Llama 3.x 8B or a similar small model. Groq retired `llama-3.
 ### Tests and evaluation
 
 ```bash
-python -m unittest discover -s tests -t .    # 93 offline tests, no API key needed
+python -m unittest discover -s tests -t .    # 99 offline tests, no API key needed
 python tests/ui_walkthrough.py               # clicks through every screen with a scripted model
 python -m evals.run_evals                    # live run against the real model, writes evals/report.json
 ```
@@ -102,7 +102,7 @@ Turn on **Voice** (top of the chat) or tap **Talk to Gia** on the start screen. 
 How it works:
 
 - **Listening** uses Whisper (`whisper-large-v3-turbo`) through the same provider and key as the chat model, so a Groq key covers both. To use another speech-to-text service, set `STT_BASE_URL`, `STT_API_KEY` and `STT_MODEL` in `.env`. With a local Ollama chat model you'll need one of these, since Ollama has no speech-to-text endpoint.
-- **Speaking** happens in your browser (the Web Speech API), so it's free and needs no key. It picks an Indian English voice, or a Hindi voice for Hindi text, if your system has one.
+- **Speaking** uses Sarvam Bulbul v3 with the male voice `shubh`, a little quicker and more expressive than default so Gia sounds cheerful. Put your key in `.env` as `SARVAM_API_KEY` (from dashboard.sarvam.ai). To change the voice set `SARVAM_SPEAKER` (other male voices: `aditya`, `kabir`, `rohan`, `rahul`, `amit`, `dev`), and tune `SARVAM_PACE` (0.5-2.0) and `SARVAM_TEMPERATURE` (0.01-1.0, higher is livelier). It speaks English, Hindi, Hinglish and Kannada. Repeated lines are cached so they're only paid for once. Without a key, or if Sarvam fails, the browser's free built-in voice reads the line instead. `python -m goodfoods.diagnose` checks the voice too.
 - Browsers only let a page talk after you've tapped something, which is why Gia greets you aloud when you switch voice on rather than the instant the page opens.
 - The mic needs permission and works on `localhost` or over HTTPS.
 

@@ -338,6 +338,23 @@ run("voice: mic error is shown and spoken", state={f"mic_{st.session_state.mic_n
 assert any(l[0] == "WARNING" for l in st.log) and "didn't catch" in SPOKEN[-1]["text"]
 gia_is("thinking")
 
+# Sarvam voice: with a key, the spoken line carries Gia's audio clip; if Sarvam fails, the browser voice is used
+os.environ["SARVAM_API_KEY"] = "test-key"
+voice.synthesize = lambda text, lang="en-IN", settings=None: b"ID3 gia clip"
+run("voice: Sarvam clip", typed="Which one is best?", script=[say("I'd pick Sakura in HSR Layout.")])
+assert SPOKEN[-1]["audio"].startswith("data:audio/mpeg;base64,"), SPOKEN[-1]
+
+
+def sarvam_down(*a, **k):
+    raise voice.VoiceError("Sarvam voice quota or rate limit reached; using the browser voice for now.")
+
+
+voice.synthesize = sarvam_down
+run("voice: Sarvam down -> browser voice", typed="Which one again?", script=[say("Still Sakura!")])
+assert SPOKEN[-1]["audio"] == "" and SPOKEN[-1]["text"].startswith("Still Sakura"), SPOKEN[-1]
+del os.environ["SARVAM_API_KEY"]
+print("   Sarvam clip used, then browser voice when Sarvam failed")
+
 run("voice: turn off hides the mic", state={"voice_on": False}, press=None)
 assert not any(l[0] == "audio_input" for l in st.log), "mic shown with voice off"
 print("\nvoice journey OK")

@@ -217,12 +217,26 @@ def start_voice() -> None:
 
 
 def speech_output() -> None:
-    """Render a zero-height component that speaks (or stops speaking) in the guest's browser."""
+    """Render a zero-height component that speaks (or stops speaking) in the guest's browser.
+    Gia's voice comes from Sarvam Bulbul when SARVAM_API_KEY is set; otherwise, or if Sarvam
+    fails, the browser's own voice reads the line."""
     text = st.session_state.pop("to_speak", None)
     stop = st.session_state.pop("stop_speaking", False)
-    if text or stop:
-        components.html(voice.speak_script(voice.speakable(text) if text else None, voice.speech_lang(text or "")),
-                        height=0)
+    if not (text or stop):
+        return
+    line = voice.speakable(text) if text else None
+    lang = voice.speech_lang(text or "")
+    audio = None
+    if line:
+        tts = voice.load_tts_settings()
+        if tts.api_key:
+            try:
+                audio = voice.synthesize(line, lang, tts)
+            except voice.VoiceError as exc:
+                if not st.session_state.get("tts_warned"):   # say it once, then quietly use the browser voice
+                    st.session_state.tts_warned = True
+                    st.toast(str(exc))
+    components.html(voice.speak_script(line, lang, audio=audio), height=0)
 
 
 GIA_SLOT: dict = {"slot": None}   # the stage placeholder for this run, so waits can update it
