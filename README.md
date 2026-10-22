@@ -1,8 +1,6 @@
 # GoodFoods · Gia (hotel-booking-agent)
 
-> This repository continues [goodfoods-agent](https://github.com/Suhas5497/goodfoods-agent) with a set of
-> bug fixes from a code review: two safety gaps in booking confirmation and lookup, plus correctness and
-> robustness fixes. Every fix has a regression test. See [`CHANGES.md`](CHANGES.md) for the full list.
+
 
 Gia is a reservation assistant for GoodFoods, a (fictional) chain of 75 restaurants across Bengaluru. You tell her what you're looking for, in English, Hindi or a mix of both, and she suggests a place, checks which tables are actually free, and books, changes or cancels the reservation.
 
@@ -297,4 +295,4 @@ docs/                   use case, prompt engineering notes, design notes, archit
 
 ## A note on how I built this
 
-I used an AI coding assistant for parts of the code and documentation. The design decisions, testing on my machine and final review are mine, and I'm happy to walk through any part of it.
+I used an AI coding assistant for parts of the code and documentation. The design decisions, testing on my machine and final review are mine.
