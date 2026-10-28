@@ -6,6 +6,8 @@ Gia is a reservation assistant for GoodFoods, a (fictional) chain of 75 restaura
 
 I built this for the Sarvam AI GenAI Engineer take-home. The agent is written from scratch: there is no LangChain or agent framework. A small open-weight model decides what the guest wants and which tool to call, and the tools are served over MCP (JSON-RPC 2.0). Anything that has to be exactly right, like table capacity, dates and "did the guest really say yes", is handled in plain Python rather than left to the model.
 
+**▶ Live demo:** [hotel-booking-agent.streamlit.app](https://hotel-booking-agent.streamlit.app/) (free hosting: if the app is asleep, click "Yes, get this app back up" and wait about a minute)
+
 
 
 ## Architecture
@@ -222,7 +224,7 @@ The full use-case document is in [`docs/USE_CASE.md`](docs/USE_CASE.md). Here's 
 
 **The real problems.** "Streamline reservations" turned out to hide five problems. Hosts miss calls during the dinner rush; published US studies put it at around a third of peak-hour calls. When one outlet is full, the guest goes to a competitor instead of a GoodFoods outlet nearby. Marketplaces own the relationship with repeat guests. Cancellations leave tables empty. And nobody records the demand that gets turned away.
 
-**What it's worth.** I built the ROI from published figures where I could find them and labelled everything else as an assumption to check with GoodFoods. In the conservative case it comes to about ₹2 crore a year in contribution, against roughly ₹75 lakh in first-year cost, so it pays back in four to five months. One thing surprised me: real no-show rates are only 2 to 4 percent, so most of the value comes from missed calls and cancellations, not from no-shows.
+**What it's worth.** I built the ROI from published figures where I could find them and labelled everything else as an assumption to check with GoodFoods. In the conservative case it comes to about ₹2 crore a year in contribution, against roughly ₹75 lakh in first-year cost, so it pays back in four to five months. To be clear, this is an estimate, not a measured result: Gia hasn't run at a real restaurant yet, and most inputs (calls per outlet, recapture rate, spend per cover, margin, cost) are assumptions to validate with a chain's own data first. One thing surprised me: real no-show rates are only 2 to 4 percent, so most of the value comes from missed calls and cancellations, not from no-shows.
 
 **How we'd measure it.** At least 60% of booking calls handled without a host, 40% of "full" conversations still ending in a GoodFoods booking, 70% of booking conversations completed, 95% correct tool choice in evaluation, and zero bookings saved without the guest's confirmation.
 
@@ -230,7 +232,7 @@ The full use-case document is in [`docs/USE_CASE.md`](docs/USE_CASE.md). Here's 
 
 **Less obvious opportunities.** Every "sorry, we're full" is a data point about demand, which helps decide table layouts, staffing and where to open the next outlet. Sending guests to a nearby sister outlet keeps revenue in the chain. Large groups become leads for the events team.
 
-**Beyond restaurants.** The engine is really "recommend, check capacity, book a time slot, with the customer's confirmation". The same thing fits other restaurant chains, hotel banquets, salons, clinics and sports turfs.
+**Beyond restaurants.** The engine is really "recommend, check capacity, book a time slot, with the customer's confirmation". It's designed so the same approach could extend to other restaurant chains, hotel banquets, salons, clinics and sports turfs. Only the restaurant version is built and tested so far.
 
 **What makes it different.** Safety is enforced in code, so a cheap small model can handle real bookings. One MCP tool server can power web chat, WhatsApp and voice. Open-weight models mean the data can stay in India. And it's built for a chain, not a single restaurant.
 
